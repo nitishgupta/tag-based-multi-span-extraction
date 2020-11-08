@@ -7,6 +7,7 @@ config {
     "multi_span_training_style": "contrastive",
     "pspan_span_training_style": "contrastive",
     "qspan_span_training_style": "contrastive",
+    "count_training_style": "contrastive",
     "arithmetic_training_style": "soft_em",
 
     "iterator"+: {

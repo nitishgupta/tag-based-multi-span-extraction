@@ -13,6 +13,17 @@
                     },
                     "spans": []
                 },
+                "contrastive_answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "1", "2"
+                    ]
+                },
                 "query_id": "f16c0ee7-f131-4a8b-a6ac-4d275ea68066"
             },
             {

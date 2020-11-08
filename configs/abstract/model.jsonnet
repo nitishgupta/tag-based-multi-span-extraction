@@ -7,6 +7,7 @@
     pspan_span_training_style:: "soft_em",
     qspan_span_training_style:: "soft_em",
     arithmetic_training_style:: "soft_em",
+    count_training_style:: "soft_em",
     multi_span_prediction_method:: "viterbi",
     multi_span_labels:: {
         'O': 0,
@@ -62,6 +63,7 @@
             "type": "count_head",
             "max_count": 10,
             "output_layer": $.default_ffn(input_dim = $.bert_dim, hidden_dim = $.hidden_dim, output_dim = self.max_count + 1),
+            "training_style": $.count_training_style
         }
     },
     answer_field_generators:: {

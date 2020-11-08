@@ -134,6 +134,7 @@ class MultiHeadModel(Model):
             'contrastive_span_bio_labels': contrastive_span_bio_labels,
             'contrastive_answer_as_passage_spans': contrastive_answer_as_passage_spans,
             'contrastive_answer_as_question_span': contrastive_answer_as_question_spans,
+            'contrastive_answer_as_counts': contrastive_answer_as_counts,
         }
 
         has_answer = False

@@ -317,7 +317,6 @@ class DropReader(DatasetReader):
             if self._is_training and not has_answer:
                 return None
 
-
             """ Contrastive answer """
             if contrastive_answer_annotations:
                 contrastive_answer_accessor, contrastive_answer_texts = extract_answer_info_from_annotation(
@@ -345,12 +344,6 @@ class DropReader(DatasetReader):
                     }
                     fields.update(contrastive_answer_fields)
                     has_contrastive_answer |= gen_has_answer
-                    # else:
-                    #     contrastive_answer_fields = answer_field_generator.get_empty_answer_fields(**kwargs)
-                    #     contrastive_answer_fields = {
-                    #         "contrastive_" + key: value for key, value in contrastive_answer_fields.items()
-                    #     }
-                    #     fields.update(contrastive_answer_fields)
             else:
                 # It no contrastive-answer, add empty answer field for each answer-generator. This should default to
                 # max-likelihood training for this instance
