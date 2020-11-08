@@ -47,7 +47,8 @@ class SingleSpanHead(Head):
         return output_dict
 
     def _get_logprobs_for_contrastive_training(self, log_probs, answer_as_spans,
-                                               contrastive_answer_as_spans, mask):
+                                               contrastive_answer_as_spans, mask,
+                                               start_or_end):
         """
         Parameters:
         -----------
@@ -60,16 +61,22 @@ class SingleSpanHead(Head):
         --------
         renormalized_log_probs: (B, L)
         """
+        assert start_or_end in ["start", "end"]
+        if start_or_end == "start":
+            span_index = 0
+        else:
+            span_index = 1
         batch_size, textlen = log_probs.size()
+        device = log_probs.device
 
         # Shape: G = (B, A)
-        gold_indices = answer_as_spans[:, :, 0]
+        gold_indices = answer_as_spans[:, :, span_index]
         gold_mask = (gold_indices > -1).long()
         clamped_gold_indices = replace_masked_values(gold_indices, gold_mask, 0)
         # V = Shape (B, A)
-        values = (torch.ones(*gold_indices.size()) * gold_mask).long()
+        values = (torch.ones(*gold_indices.size(), device=device) * gold_mask).long()
         # Shape: M = (B, A, L); make M[b, a, G[b,a]] = 1 if G[b,a] is not masked using scatter.
-        token_mask_gold = mask.new_zeros(*log_probs.size())
+        token_mask_gold = mask.new_zeros(*log_probs.size(), device=device)
         token_mask_gold = token_mask_gold.unsqueeze(1).expand((batch_size, answer_as_spans.size()[1], textlen)).clone()
         token_mask_gold.scatter_(2, clamped_gold_indices.unsqueeze(2), values.unsqueeze(2))
         # Shape: (B, L) token is a candidate if in any gold span
@@ -77,13 +84,13 @@ class SingleSpanHead(Head):
 
 
         # Shape: C = (B, A)
-        contrast_indices = contrastive_answer_as_spans[:, :, 0]
+        contrast_indices = contrastive_answer_as_spans[:, :, span_index]
         contrast_mask = (contrast_indices > -1).long()
         clamped_contrast_indices = replace_masked_values(contrast_indices, contrast_mask, 0)
         # V = Shape (B, A)
-        values = (torch.ones(*contrast_indices.size()) * contrast_mask).long()
+        values = (torch.ones(*contrast_indices.size(), device=device) * contrast_mask).long()
         # Shape: M = (B, A, L); make M[b, a, G[b,a]] = 1 if G[b,a] is not masked using scatter.
-        token_mask_contrast = mask.new_zeros(*log_probs.size())
+        token_mask_contrast = mask.new_zeros(*log_probs.size(), device=device)
         token_mask_contrast = token_mask_contrast.unsqueeze(1).expand((batch_size,
                                                                        contrastive_answer_as_spans.size()[1],
                                                                        textlen)).clone()
@@ -100,9 +107,9 @@ class SingleSpanHead(Head):
         # Renormalize log_probs for these indices
         token_candidate_mask = ((token_mask_gold + token_mask_contrast) >= 1).long()
 
-        renormalized_probs = masked_softmax(log_probs, token_candidate_mask)
+        renormalized_probs = masked_softmax(log_probs, token_candidate_mask, memory_efficient=True)
         renormalized_probs = replace_masked_values(renormalized_probs,
-                                                   mask=token_candidate_mask, replace_with=1e-45)
+                                                   mask=token_candidate_mask, replace_with=1e-32)
         renormalized_logprobs = torch.log(renormalized_probs)
 
         return renormalized_logprobs
@@ -118,9 +125,11 @@ class SingleSpanHead(Head):
             input, mask = self.get_input_and_mask(kwargs)
             contrastive_answer_as_spans = self.get_contrastive_answer_representations(gold_answer_representations)
             start_log_probs = self._get_logprobs_for_contrastive_training(start_log_probs, answer_as_spans,
-                                                                          contrastive_answer_as_spans, mask)
+                                                                          contrastive_answer_as_spans, mask,
+                                                                          "start")
             end_log_probs = self._get_logprobs_for_contrastive_training(end_log_probs, answer_as_spans,
-                                                                        contrastive_answer_as_spans, mask)
+                                                                        contrastive_answer_as_spans, mask,
+                                                                        "end")
 
         # Shape: (batch_size, # of answer spans)
         gold_span_starts = answer_as_spans[:, :, 0]

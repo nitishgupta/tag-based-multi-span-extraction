@@ -345,6 +345,7 @@ class MultiHeadModel(Model):
         scores_per_answer_type, scores_per_head = self._metrics.get_metric(reset)
         metrics = {'em': exact_match, 'f1': f1_score}
 
+        """
         for answer_type, type_scores_per_head in scores_per_answer_type_and_head.items():
             for head, (answer_type_head_exact_match, answer_type_head_f1_score, type_head_count) in type_scores_per_head.items():
                 if 'multi' in head and 'span' in answer_type:
@@ -382,5 +383,6 @@ class MultiHeadModel(Model):
 
             metrics['em_all_spans'] = em_all_spans
             metrics['f1_all_spans'] = f1_all_spans
+        """
         
         return metrics

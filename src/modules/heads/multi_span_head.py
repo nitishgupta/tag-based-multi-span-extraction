@@ -130,13 +130,18 @@ class MultiSpanHead(Head):
         """
         # Shape: (B, S, L)
         contrastive_bio_seq_ex = contrastive_bio_seq.unsqueeze(1).expand_as(gold_bio_seqs)
+        device = log_probs.device
 
         num_tags = log_probs.size()[-1]
         # Shape: (B, S, L, 3) -- the tag_mask is unmasked for tags that appear
         # either in the gold-answer or contrastive answer
-        tag_mask = torch.zeros([*contrastive_bio_seq_ex.size(), num_tags])
-        tag_mask.scatter_(3, gold_bio_seqs.unsqueeze(-1), torch.ones(gold_bio_seqs.size()).unsqueeze(-1))
-        tag_mask.scatter_(3, contrastive_bio_seq_ex.unsqueeze(-1), torch.ones(gold_bio_seqs.size()).unsqueeze(-1))
+        tag_mask = torch.zeros([*contrastive_bio_seq_ex.size(), num_tags], device=device)
+        tag_mask.scatter_(3,
+                          gold_bio_seqs.unsqueeze(-1),
+                          torch.ones(gold_bio_seqs.size(), device=device).unsqueeze(-1))
+        tag_mask.scatter_(3,
+                          contrastive_bio_seq_ex.unsqueeze(-1),
+                          torch.ones(gold_bio_seqs.size(), device=device).unsqueeze(-1))
 
         # Need to set tag_mask[(b, :, :, :] = 1 for any instance that does not have contrastive-seq. This would result
         # in all tags to be candidates for such an instance, effectively yielding the renormalization ineffective.
@@ -152,7 +157,7 @@ class MultiSpanHead(Head):
         masked_log_probs = expanded_log_probs * tag_mask.float()
         # Renormalize probablities for remaining tags -- if a token's `neighborhood` tag is the same as the gold,
         # this renormalized prob would be 1.0
-        renormalized_probs = masked_softmax(masked_log_probs, tag_mask)
+        renormalized_probs = masked_softmax(masked_log_probs, tag_mask, memory_efficient=True)
         # Replace masked-tag probability with epsilon before log
         renormalized_probs = replace_masked_values(renormalized_probs,
                                                    mask=tag_mask, replace_with=1e-32)

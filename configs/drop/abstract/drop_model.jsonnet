@@ -17,7 +17,6 @@ config {
     "model"+: {
         "dataset_name": "drop",
     },
-    // "train_data_path": "drop_data/drop_dataset_train.json",
-    "train_data_path": "drop_data/drop_sample_train.json",
+    "train_data_path": "drop_data/drop_dataset_train.json",
     "validation_data_path": "drop_data/drop_dataset_dev.json",
 }
