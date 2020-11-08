@@ -17,5 +17,8 @@ class PassageSpanHead(SingleSpanHead):
     def get_gold_answer_representations(self, gold_answer_representations: Dict[str, torch.LongTensor]) -> torch.LongTensor:
         return gold_answer_representations['answer_as_passage_spans']
 
+    def get_contrastive_answer_representations(self, gold_answer_representations: Dict[str, torch.LongTensor]) -> torch.LongTensor:
+        return gold_answer_representations['contrastive_answer_as_passage_spans']
+
     def get_context(self) -> str:
         return 'p'

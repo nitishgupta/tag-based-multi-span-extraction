@@ -103,7 +103,18 @@ class MultiHeadModel(Model):
                 answer_as_passage_spans: torch.LongTensor = None,
                 answer_as_question_spans: torch.LongTensor = None,
                 span_bio_labels: torch.LongTensor = None,
-                is_bio_mask: torch.LongTensor = None) -> Dict[str, Any]:
+                is_bio_mask: torch.LongTensor = None,
+                contrastive_wordpiece_indices: torch.LongTensor = None,
+                contrastive_answer_as_expressions: torch.LongTensor = None,
+                contrastive_answer_as_expressions_extra: torch.LongTensor = None,
+                contrastive_answer_as_counts: torch.LongTensor = None,
+                contrastive_answer_as_text_to_disjoint_bios: torch.LongTensor = None,
+                contrastive_answer_as_list_of_bios: torch.LongTensor = None,
+                contrastive_answer_as_passage_spans: torch.LongTensor = None,
+                contrastive_answer_as_question_spans: torch.LongTensor = None,
+                contrastive_span_bio_labels: torch.LongTensor = None,
+                contrastive_is_bio_mask: torch.LongTensor = None
+                ) -> Dict[str, Any]:
         # pylint: disable=arguments-differ
         question_passage_special_tokens_mask = (1 - question_passage_special_tokens_mask)
         
@@ -119,7 +130,10 @@ class MultiHeadModel(Model):
             'answer_as_counts': answer_as_counts,
             'answer_as_text_to_disjoint_bios': answer_as_text_to_disjoint_bios,
             'answer_as_list_of_bios': answer_as_list_of_bios,
-            'span_bio_labels': span_bio_labels
+            'span_bio_labels': span_bio_labels,
+            'contrastive_span_bio_labels': contrastive_span_bio_labels,
+            'contrastive_answer_as_passage_spans': contrastive_answer_as_passage_spans,
+            'contrastive_answer_as_question_span': contrastive_answer_as_question_spans,
         }
 
         has_answer = False

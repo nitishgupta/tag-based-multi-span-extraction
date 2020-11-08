@@ -26,5 +26,8 @@ class QuestionSpanHead(SingleSpanHead):
     def get_gold_answer_representations(self, gold_answer_representations: Dict[str, torch.LongTensor]) -> torch.LongTensor:
         return gold_answer_representations['answer_as_question_spans']
 
+    def get_contrastive_answer_representations(self, gold_answer_representations: Dict[str, torch.LongTensor]) -> torch.LongTensor:
+        return gold_answer_representations['contrastive_answer_as_question_span']
+
     def get_context(self) -> str:
         return 'q'

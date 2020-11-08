@@ -2,7 +2,7 @@ from typing import Dict, Any, Union
 
 import torch
 
-from allennlp.nn.util import replace_masked_values, logsumexp, masked_log_softmax
+from allennlp.nn.util import replace_masked_values, logsumexp, masked_log_softmax, masked_softmax
 from allennlp.modules import FeedForward
 
 from src.modules.heads.head import Head
@@ -46,12 +46,81 @@ class SingleSpanHead(Head):
         }
         return output_dict
 
+    def _get_logprobs_for_contrastive_training(self, log_probs, answer_as_spans,
+                                               contrastive_answer_as_spans, mask):
+        """
+        Parameters:
+        -----------
+        start_log_probs: (B, L)
+        answer_as_spans: (B, A, 2)
+        contrastive_answer_as_spans: (B, C, 2)
+        mask: (B, L)
+
+        Returns:
+        --------
+        renormalized_log_probs: (B, L)
+        """
+        batch_size, textlen = log_probs.size()
+
+        # Shape: G = (B, A)
+        gold_indices = answer_as_spans[:, :, 0]
+        gold_mask = (gold_indices > -1).long()
+        clamped_gold_indices = replace_masked_values(gold_indices, gold_mask, 0)
+        # V = Shape (B, A)
+        values = (torch.ones(*gold_indices.size()) * gold_mask).long()
+        # Shape: M = (B, A, L); make M[b, a, G[b,a]] = 1 if G[b,a] is not masked using scatter.
+        token_mask_gold = mask.new_zeros(*log_probs.size())
+        token_mask_gold = token_mask_gold.unsqueeze(1).expand((batch_size, answer_as_spans.size()[1], textlen)).clone()
+        token_mask_gold.scatter_(2, clamped_gold_indices.unsqueeze(2), values.unsqueeze(2))
+        # Shape: (B, L) token is a candidate if in any gold span
+        token_mask_gold = (token_mask_gold.sum(1) >= 1).long()
+
+
+        # Shape: C = (B, A)
+        contrast_indices = contrastive_answer_as_spans[:, :, 0]
+        contrast_mask = (contrast_indices > -1).long()
+        clamped_contrast_indices = replace_masked_values(contrast_indices, contrast_mask, 0)
+        # V = Shape (B, A)
+        values = (torch.ones(*contrast_indices.size()) * contrast_mask).long()
+        # Shape: M = (B, A, L); make M[b, a, G[b,a]] = 1 if G[b,a] is not masked using scatter.
+        token_mask_contrast = mask.new_zeros(*log_probs.size())
+        token_mask_contrast = token_mask_contrast.unsqueeze(1).expand((batch_size,
+                                                                       contrastive_answer_as_spans.size()[1],
+                                                                       textlen)).clone()
+        token_mask_contrast.scatter_(2, clamped_contrast_indices.unsqueeze(2), values.unsqueeze(2))
+        # Shape: (B, L) token is a candidate if in any contrast span
+        token_mask_contrast = (token_mask_contrast.sum(1) >= 1).long()
+
+        # Shape: (B) mask = 1 if instance does NOT have contrastive spans. For such an instance no renormalization
+        # should take place
+        contrast_mask = (token_mask_contrast.sum(1) == 0).long()
+        # If contrast_mask[i] == 1 (instance w/ no contrastive spans), then use original mask instead
+        token_mask_contrast = ((token_mask_contrast + (mask * contrast_mask.unsqueeze(1))) >= 1).long()
+
+        # Renormalize log_probs for these indices
+        token_candidate_mask = ((token_mask_gold + token_mask_contrast) >= 1).long()
+
+        renormalized_probs = masked_softmax(log_probs, token_candidate_mask)
+        renormalized_probs = replace_masked_values(renormalized_probs,
+                                                   mask=token_candidate_mask, replace_with=1e-45)
+        renormalized_logprobs = torch.log(renormalized_probs)
+
+        return renormalized_logprobs
+
     def gold_log_marginal_likelihood(self,
                                  gold_answer_representations: Dict[str, torch.LongTensor],
                                  start_log_probs: torch.LongTensor,
                                  end_log_probs: torch.LongTensor,
                                  **kwargs: Any):
         answer_as_spans = self.get_gold_answer_representations(gold_answer_representations)
+
+        if self._training_style == "contrastive":
+            input, mask = self.get_input_and_mask(kwargs)
+            contrastive_answer_as_spans = self.get_contrastive_answer_representations(gold_answer_representations)
+            start_log_probs = self._get_logprobs_for_contrastive_training(start_log_probs, answer_as_spans,
+                                                                          contrastive_answer_as_spans, mask)
+            end_log_probs = self._get_logprobs_for_contrastive_training(end_log_probs, answer_as_spans,
+                                                                        contrastive_answer_as_spans, mask)
 
         # Shape: (batch_size, # of answer spans)
         gold_span_starts = answer_as_spans[:, :, 0]
@@ -77,6 +146,8 @@ class SingleSpanHead(Head):
 
         # Shape: (batch_size, )
         if self._training_style == 'soft_em':
+            log_marginal_likelihood_for_span = logsumexp(log_likelihood_for_spans)
+        elif self._training_style == 'contrastive':
             log_marginal_likelihood_for_span = logsumexp(log_likelihood_for_spans)
         elif self._training_style == 'hard_em':
             most_likely_span_index = log_likelihood_for_spans.argmax(dim=-1)
@@ -109,6 +180,9 @@ class SingleSpanHead(Head):
         raise NotImplementedError
 
     def get_gold_answer_representations(self, gold_answer_representations: Dict[str, torch.LongTensor]) -> torch.LongTensor:
+        raise NotImplementedError
+
+    def get_contrastive_answer_representations(self, gold_answer_representations: Dict[str, torch.LongTensor]) -> torch.LongTensor:
         raise NotImplementedError
 
     def get_context(self) -> str:
