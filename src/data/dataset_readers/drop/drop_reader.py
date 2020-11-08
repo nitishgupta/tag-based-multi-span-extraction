@@ -328,16 +328,18 @@ class DropReader(DatasetReader):
 
                 kwargs["answer_type"] = contrastive_ans_type
                 kwargs["answer_texts"] = contrastive_answer_texts
+                # Setting old_reader_behavior to True only considers answer spans (end-point/tagged) if all spans are
+                # found in the text. For contrastive answers we expect a set of spans that are potential negatives and
+                # not all of them need to appear in the text
+                kwargs["old_reader_behavior"] = False
 
                 has_contrastive_answer = False
                 for answer_generator_name, answer_field_generator in self._answer_field_generators.items():
-                    # if answer_generator_names is None or answer_generator_name in answer_generator_names:
-                    # Create contrastive-answer representation from all generators.
+                    # Create contrastive-answer representation from all generators irresepective of the gold ans type
                     # For a given generator,
                     #  - if the gold answer is not supported, the log-likelihood will be masked anyway
                     #  - if the contrastive ans is not supported, model will resort to log-likelihood
                     contrastive_answer_fields, gen_has_answer = answer_field_generator.get_answer_fields(**kwargs)
-
                     contrastive_answer_fields = {
                         "contrastive_" + key: value for key, value in contrastive_answer_fields.items()
                     }
