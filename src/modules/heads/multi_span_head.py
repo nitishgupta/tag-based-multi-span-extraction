@@ -185,9 +185,12 @@ class MultiSpanHead(Head):
         elif self._training_style == 'contrastive':
             contrastive_bio_seq = gold_answer_representations['contrastive_span_bio_labels']
             # For instances where contrastive_bio_seq is masked; no renormalization would take place
-            renormalized_logprobs = self._get_logprobs_for_contrastive_training(
-                gold_bio_seqs=gold_bio_seqs, contrastive_bio_seq=contrastive_bio_seq, log_probs=log_probs, mask=mask)
-            log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, renormalized_logprobs)
+            # renormalized_logprobs = self._get_logprobs_for_contrastive_training(
+            #     gold_bio_seqs=gold_bio_seqs, contrastive_bio_seq=contrastive_bio_seq, log_probs=log_probs, mask=mask)
+            # log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, renormalized_logprobs)
+            log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, contrastive_bio_seq,
+                                                                            log_probs)
+
         elif self._training_style == 'hard_em':
             log_marginal_likelihood = self._get_most_likely_likelihood(gold_bio_seqs, log_probs)
         else:
@@ -318,31 +321,85 @@ class MultiSpanHead(Head):
 
     def _contrastive_marginal_likelihood(self,
                                          bio_seqs: torch.LongTensor,
+                                         contrastive_bio_seq: torch.LongTensor,
                                          log_probs: torch.LongTensor):
-        """ There seems to require no change from _marginal_likelihood apart from removing the need to
-        resize log_probs in the same shape as bio_seqs
-        """
-
         # bio_seqs - Shape: (batch_size, # of correct sequences, seq_length)
-        # log_probs - Shape: (batch_size, # of correct sequences, seq_length, 3)
-
-        # get the log-likelihood per each sequence index
-        # Shape: (batch_size, # of correct sequences, seq_length)
+        # contrastive_bio_seq - Shape: (batch_size, seq_length)
+        # log_probs - Shape: (batch_size, seq_length, 3)
+        device = log_probs.device
+        batch_size = log_probs.size()[0]
+        num_gold_seqs = bio_seqs.size()[1]
+        # Shape: (B, G, L, 3) duplicate log_probs for each gold bios sequence
+        expanded_log_probs = log_probs.unsqueeze(1).expand(-1, num_gold_seqs, -1, -1)
+        # Shape: (B, G, L) get the log-likelihood per each sequence index
         log_likelihoods = \
-                torch.gather(log_probs, dim=-1, index=bio_seqs.unsqueeze(-1)).squeeze(-1)
-
-        # Shape: (batch_size, # of correct sequences)
+            torch.gather(expanded_log_probs, dim=-1, index=bio_seqs.unsqueeze(-1)).squeeze(-1)
+        # Shape: (B, G) -- sequence mask
         correct_sequences_pad_mask = (bio_seqs.sum(-1) > 0).long()
-
-        # Sum the log-likelihoods for each index to get the log-likelihood of the sequence
-        # Shape: (batch_size, # of correct sequences)
+        # Shape: (B, G) Sum the log-likelihoods for each index to get the log-likelihood of the sequence
         sequences_log_likelihoods = log_likelihoods.sum(dim=-1)
         sequences_log_likelihoods = replace_masked_values(sequences_log_likelihoods, correct_sequences_pad_mask, -1e7)
 
+
+        # Shape: (B, L)
+        contrastive_log_likelihoods = torch.gather(log_probs, dim=-1,
+                                                   index=contrastive_bio_seq.unsqueeze(-1)).squeeze(-1)
+        # Shape: (B)
+        contrastive_seq_likelihood = contrastive_log_likelihoods.sum(dim=-1)
+        # Shape: (B, G)
+        contrastive_seq_likelihood_ex = contrastive_seq_likelihood.unsqueeze(1).expand_as(sequences_log_likelihoods)
+        # Shape: (B)
+        contrastive_mask = (contrastive_bio_seq.sum(-1) > 0).long()
+
+        # Now we'll perform renormalization: p(x)' = p(x)/(p(x) + p(x'))
+        # log(p(x)') = log(p(x)) - log(p(x) + p(x'))
+        # instead of computing second term as probabilities, we can do logsumexp
+        # log(p(x) + p(x')) = log(exp(log(p(x)) + log(exp(p(x')))
+        # For this, we'll construct a [B, G, 2] by concat-ing sequences_log_likelihoods and contrastive_seq_likelihood
+        # then perform logsumexp along the dim=-1
+        # Shape: (B, G, 2)
+        combined_loglikelihoods_concat = torch.cat([sequences_log_likelihoods.unsqueeze(2),
+                                                    contrastive_seq_likelihood_ex.unsqueeze(2)], dim=2)
+        # Shape: (B, G) -- log(p(x) + p(x'))
+        combined_loglikelihoods = logsumexp(combined_loglikelihoods_concat, dim=-1)
+        # Instances (rows) without contrastive-examples would be zero, i.e. log(p(x) + p(x')) = 0; no renormalization
+        combined_loglikelihoods = combined_loglikelihoods * contrastive_mask.unsqueeze(1)
+        # Shape: (B, G)
+        renormalized_log = sequences_log_likelihoods - combined_loglikelihoods
+        renormalized_log_likelihoods = replace_masked_values(renormalized_log, correct_sequences_pad_mask, -1e7)
+
         # Sum the log-likelihoods for each sequence to get the marginalized log-likelihood over the correct answers
-        log_marginal_likelihood = logsumexp(sequences_log_likelihoods, dim=-1)
+        log_marginal_likelihood = logsumexp(renormalized_log_likelihoods, dim=-1)
 
         return log_marginal_likelihood
+
+    # def _contrastive_marginal_likelihood(self,
+    #                                      bio_seqs: torch.LongTensor,
+    #                                      log_probs: torch.LongTensor):
+    #     """ There seems to require no change from _marginal_likelihood apart from removing the need to
+    #     resize log_probs in the same shape as bio_seqs
+    #     """
+    #
+    #     # bio_seqs - Shape: (batch_size, # of correct sequences, seq_length)
+    #     # log_probs - Shape: (batch_size, # of correct sequences, seq_length, 3)
+    #
+    #     # get the log-likelihood per each sequence index
+    #     # Shape: (batch_size, # of correct sequences, seq_length)
+    #     log_likelihoods = \
+    #             torch.gather(log_probs, dim=-1, index=bio_seqs.unsqueeze(-1)).squeeze(-1)
+    #
+    #     # Shape: (batch_size, # of correct sequences)
+    #     correct_sequences_pad_mask = (bio_seqs.sum(-1) > 0).long()
+    #
+    #     # Sum the log-likelihoods for each index to get the log-likelihood of the sequence
+    #     # Shape: (batch_size, # of correct sequences)
+    #     sequences_log_likelihoods = log_likelihoods.sum(dim=-1)
+    #     sequences_log_likelihoods = replace_masked_values(sequences_log_likelihoods, correct_sequences_pad_mask, -1e7)
+    #
+    #     # Sum the log-likelihoods for each sequence to get the marginalized log-likelihood over the correct answers
+    #     log_marginal_likelihood = logsumexp(sequences_log_likelihoods, dim=-1)
+    #
+    #     return log_marginal_likelihood
 
     def _get_most_likely_likelihood(self,
                              bio_seqs: torch.LongTensor,
