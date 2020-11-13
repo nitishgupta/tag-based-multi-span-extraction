@@ -1,6 +1,9 @@
 import json
 from collections import defaultdict
 import sys
+import random
+
+random.seed(53901)
 
 
 if len(sys.argv) != 3:
@@ -43,7 +46,7 @@ for datum in data["data"]:
                 contrastive_answers = []
                 if len(answer) == 1:
                     for entity in all_answer_entities:
-                        if entity != answer[0]:
+                        if entity != answer[0] and entity not in answer[0] and answer[0] not in entity:
                             contrastive_answers.append(entity)
                 else:
                     # Make sets of two entities, irrespective of the number of answer spans.
@@ -56,6 +59,18 @@ for datum in data["data"]:
                                 continue
                             contrastive_answers.append([entity_list[i], entity_list[j]])
 
+                # Choosing a random element among the options because we can have only one contrastive answer as of
+                # now. This should change.
+                # TODO (pradeep): Use NER information to choose.
+                if len(contrastive_answers) > 1:
+                    chosen_contrastive_answer = random.choice(contrastive_answers)
+                elif contrastive_answers:
+                    chosen_contrastive_answer = contrastive_answers[0]
+                else:
+                    chosen_contrastive_answer = None
+
+                if isinstance(chosen_contrastive_answer, str):
+                    chosen_contrastive_answer = [chosen_contrastive_answer]
                 # TODO: Make contrastive questions.
                 for question_info in questions:
                     new_question_info = {"question": question_info["question"],
@@ -63,9 +78,10 @@ for datum in data["data"]:
                     new_question_info["answer"] = {"number": "",
                                                    "date": {"day": "", "month": "", "year": ""},
                                                    "spans": list(answer)}
-                    new_question_info["contrastive_answer"] = {"number": "",
-                                                               "date": {"day": "", "month": "", "year": ""},
-                                                               "spans": contrastive_answers}
+                    if chosen_contrastive_answer:
+                        new_question_info["contrastive_answer"] = {"number": "",
+                                                                   "date": {"day": "", "month": "", "year": ""},
+                                                                   "spans": chosen_contrastive_answer}
                     contrastive_qas.append(new_question_info)
             if contrastive_qas:
                 output_data[paragraph_info["context_id"]] = {"passage": paragraph_info["context"],
