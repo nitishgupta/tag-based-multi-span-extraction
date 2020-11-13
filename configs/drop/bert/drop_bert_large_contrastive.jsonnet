@@ -23,6 +23,6 @@ config {
     "dataset_reader"+: {
         "max_instances": -1
     },
-    "train_data_path": "drop_data/drop_dataset_train.json",
+    "train_data_path": "drop_data/drop_dataset_train_ce_v1.json",
     "validation_data_path": "drop_data/drop_dataset_dev.json",
 }

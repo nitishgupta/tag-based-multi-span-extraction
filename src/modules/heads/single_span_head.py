@@ -46,73 +46,111 @@ class SingleSpanHead(Head):
         }
         return output_dict
 
-    def _get_logprobs_for_contrastive_training(self, log_probs, answer_as_spans,
-                                               contrastive_answer_as_spans, mask,
-                                               start_or_end):
+    def get_span_endpoint_logprobs(self, start_log_probs, end_log_probs, answer_as_spans):
+
+
+        # Shape: (B, A)
+        gold_span_starts = answer_as_spans[:, :, 0]
+        gold_span_ends = answer_as_spans[:, :, 1]
+        # Some spans are padded with index -1,
+        # so we clamp those paddings to 0 and then mask after `torch.gather()`.
+        gold_span_mask = (gold_span_starts != -1).long()
+        clamped_gold_span_starts = \
+            replace_masked_values(gold_span_starts, gold_span_mask, 0)
+        clamped_gold_span_ends = \
+            replace_masked_values(gold_span_ends, gold_span_mask, 0)
+        # Shape: (B, A)
+        log_likelihood_for_span_starts = \
+            torch.gather(start_log_probs, 1, clamped_gold_span_starts)
+        log_likelihood_for_span_ends = \
+            torch.gather(end_log_probs, 1, clamped_gold_span_ends)
+
+        log_likelihood_for_span_starts = \
+            replace_masked_values(log_likelihood_for_span_starts, gold_span_mask, -1e7)
+        log_likelihood_for_span_ends = \
+            replace_masked_values(log_likelihood_for_span_ends, gold_span_mask, -1e7)
+            # # Shape: (B, A)
+        # log_likelihood_for_spans = \
+        #     log_likelihood_for_span_starts + log_likelihood_for_span_ends
+        # # For those padded spans, we set their log probabilities to be very small negative value
+        # log_likelihood_for_spans = \
+        #     replace_masked_values(log_likelihood_for_spans, gold_span_mask, -1e7)
+        return (log_likelihood_for_span_starts, log_likelihood_for_span_ends)
+
+
+    def get_renormalized_logprob(self, gold_logprobs, contrastive_logprobs, contrast_mask):
         """
-        Parameters:
-        -----------
-        start_log_probs: (B, L)
-        answer_as_spans: (B, A, 2)
-        contrastive_answer_as_spans: (B, C, 2)
-        mask: (B, L)
+        gold_logprobs: (B, A)
+        contrastive_logprobs: (B, C)
+        contrast_mask: (B)
 
-        Returns:
-        --------
-        renormalized_log_probs: (B, L)
+        output: renormalized_gold_logprobs:
         """
-        assert start_or_end in ["start", "end"]
-        if start_or_end == "start":
-            span_index = 0
-        else:
-            span_index = 1
-        batch_size, textlen = log_probs.size()
-        device = log_probs.device
+        batch_size, num_gold_spans = gold_logprobs.size()
+        _, num_contrast_spans = contrastive_logprobs.size()
 
-        # Shape: G = (B, A)
-        gold_indices = answer_as_spans[:, :, span_index]
-        gold_mask = (gold_indices > -1).long()
-        clamped_gold_indices = replace_masked_values(gold_indices, gold_mask, 0)
-        # V = Shape (B, A)
-        values = (torch.ones(*gold_indices.size(), device=device) * gold_mask).long()
-        # Shape: M = (B, A, L); make M[b, a, G[b,a]] = 1 if G[b,a] is not masked using scatter.
-        token_mask_gold = mask.new_zeros(*log_probs.size(), device=device)
-        token_mask_gold = token_mask_gold.unsqueeze(1).expand((batch_size, answer_as_spans.size()[1], textlen)).clone()
-        token_mask_gold.scatter_(2, clamped_gold_indices.unsqueeze(2), values.unsqueeze(2))
-        # Shape: (B, L) token is a candidate if in any gold span
-        token_mask_gold = (token_mask_gold.sum(1) >= 1).long()
+        # we want to renormalize every element in (:, A) with contrastive labels (:, C),
+        # In the output, every element (b, a) should have been normalized with [(b, a) + (b, :)] as the denominator
+        # log(p(x)_CE) = log(p) - log(p(x) + p(x'))
+        # log(p(x) + p(x')) -- can be computed as log(exp(log(p(x))) + exp(log(p(x'))))
+        # That is, run logsumexp on gold_logprobs + contrastive_logprobs. Since for ever gold answer in gold_logprobs,
+        # we want to normalize over all contrastive_logprobs, we'll create a (B, A, C+1) sized-tensor where logsumexp
+        # would be performed on the last dimension.
+        # combined_logprob (B, A, C+1) would be concat of G=(B, A, 1) and C=(B, 1_ex, C).
+
+        # Shape: (B, A, C)
+        contrastive_logprobs_ex = contrastive_logprobs.unsqueeze(1).expand((batch_size, num_gold_spans,
+                                                                            num_contrast_spans))
+        # Shape: (B, A, C+1)
+        combined_logprobs = torch.cat([gold_logprobs.unsqueeze(2), contrastive_logprobs_ex], dim=2)
+        # Shape: (B, A)
+        log_denominator = logsumexp(combined_logprobs, dim=2)
+        # log(p(x) + p(x')) = 0 for instances without contrastive labels
+        log_denominator = log_denominator * contrast_mask.unsqueeze(1).float()
+        # Shape: (B, A)
+        renormalized_logprob = gold_logprobs - log_denominator
+        return renormalized_logprob
 
 
-        # Shape: C = (B, A)
-        contrast_indices = contrastive_answer_as_spans[:, :, span_index]
-        contrast_mask = (contrast_indices > -1).long()
-        clamped_contrast_indices = replace_masked_values(contrast_indices, contrast_mask, 0)
-        # V = Shape (B, A)
-        values = (torch.ones(*contrast_indices.size(), device=device) * contrast_mask).long()
-        # Shape: M = (B, A, L); make M[b, a, G[b,a]] = 1 if G[b,a] is not masked using scatter.
-        token_mask_contrast = mask.new_zeros(*log_probs.size(), device=device)
-        token_mask_contrast = token_mask_contrast.unsqueeze(1).expand((batch_size,
-                                                                       contrastive_answer_as_spans.size()[1],
-                                                                       textlen)).clone()
-        token_mask_contrast.scatter_(2, clamped_contrast_indices.unsqueeze(2), values.unsqueeze(2))
-        # Shape: (B, L) token is a candidate if in any contrast span
-        token_mask_contrast = (token_mask_contrast.sum(1) >= 1).long()
+    def _get_contrastive_loss(self, answer_as_spans, contrastive_answer_as_spans, start_log_probs, end_log_probs):
+        gold_start_logprobs, gold_end_logprobs = self.get_span_endpoint_logprobs(
+            start_log_probs, end_log_probs, answer_as_spans)
 
-        # Shape: (B) mask = 1 if instance does NOT have contrastive spans. For such an instance no renormalization
-        # should take place
-        contrast_mask = (token_mask_contrast.sum(1) == 0).long()
-        # If contrast_mask[i] == 1 (instance w/ no contrastive spans), then use original mask instead
-        token_mask_contrast = ((token_mask_contrast + (mask * contrast_mask.unsqueeze(1))) >= 1).long()
+        contrast_start_logprobs, contrast_end_logprobs = self.get_span_endpoint_logprobs(
+            start_log_probs, end_log_probs, contrastive_answer_as_spans)
 
-        # Renormalize log_probs for these indices
-        token_candidate_mask = ((token_mask_gold + token_mask_contrast) >= 1).long()
+        # Shape: (B)
+        contrast_mask = self._get_contrast_mask(contrastive_answer_as_spans)
 
-        renormalized_probs = masked_softmax(log_probs, token_candidate_mask, memory_efficient=True)
-        renormalized_probs = replace_masked_values(renormalized_probs,
-                                                   mask=token_candidate_mask, replace_with=1e-32)
-        renormalized_logprobs = torch.log(renormalized_probs)
+        # (B, A)
+        renormalized_start_logprobs = self.get_renormalized_logprob(gold_start_logprobs, contrast_start_logprobs,
+                                                                    contrast_mask)
+        # (B, A)
+        renormalized_end_logprobs = self.get_renormalized_logprob(gold_end_logprobs, contrast_end_logprobs,
+                                                                  contrast_mask)
 
-        return renormalized_logprobs
+        gold_span_starts = answer_as_spans[:, :, 0]
+        # (B, A)
+        gold_span_mask = (gold_span_starts != -1).long()
+
+        log_likelihood_for_spans = \
+            renormalized_start_logprobs + renormalized_end_logprobs
+
+        log_likelihood_for_spans = \
+            replace_masked_values(log_likelihood_for_spans, gold_span_mask, -1e7)
+
+        log_marginal_likelihood_for_span = logsumexp(log_likelihood_for_spans)
+
+        return log_marginal_likelihood_for_span
+
+
+    def _get_contrast_mask(self, contrastive_answer_as_spans):
+        # (B, C)
+        span_starts = contrastive_answer_as_spans[:, :, 0]
+        # (B, A)
+        contrast_mask = (torch.max(span_starts, dim=1)[0] >= 0).long()
+        return contrast_mask
+
 
     def gold_log_marginal_likelihood(self,
                                  gold_answer_representations: Dict[str, torch.LongTensor],
@@ -120,16 +158,6 @@ class SingleSpanHead(Head):
                                  end_log_probs: torch.LongTensor,
                                  **kwargs: Any):
         answer_as_spans = self.get_gold_answer_representations(gold_answer_representations)
-
-        if self._training_style == "contrastive":
-            input, mask = self.get_input_and_mask(kwargs)
-            contrastive_answer_as_spans = self.get_contrastive_answer_representations(gold_answer_representations)
-            start_log_probs = self._get_logprobs_for_contrastive_training(start_log_probs, answer_as_spans,
-                                                                          contrastive_answer_as_spans, mask,
-                                                                          "start")
-            end_log_probs = self._get_logprobs_for_contrastive_training(end_log_probs, answer_as_spans,
-                                                                        contrastive_answer_as_spans, mask,
-                                                                        "end")
 
         # Shape: (batch_size, # of answer spans)
         gold_span_starts = answer_as_spans[:, :, 0]
@@ -157,7 +185,14 @@ class SingleSpanHead(Head):
         if self._training_style == 'soft_em':
             log_marginal_likelihood_for_span = logsumexp(log_likelihood_for_spans)
         elif self._training_style == 'contrastive':
-            log_marginal_likelihood_for_span = logsumexp(log_likelihood_for_spans)
+            contrastive_answer_as_spans = self.get_contrastive_answer_representations(gold_answer_representations)
+            c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_spans, contrastive_answer_as_spans,
+                                                                             start_log_probs, end_log_probs)
+            mle_log_marginal_likelihood = logsumexp(log_likelihood_for_spans)
+            contrast_mask = self._get_contrast_mask(contrastive_answer_as_spans)
+            contrast_mask = contrast_mask.float()
+            # mle + m*ce
+            log_marginal_likelihood_for_span = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
         elif self._training_style == 'hard_em':
             most_likely_span_index = log_likelihood_for_spans.argmax(dim=-1)
             log_marginal_likelihood_for_span = log_likelihood_for_spans.gather(dim=1, index=most_likely_span_index.unsqueeze(-1)).squeeze(dim=-1)

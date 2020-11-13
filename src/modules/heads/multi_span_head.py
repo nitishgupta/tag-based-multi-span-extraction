@@ -106,65 +106,7 @@ class MultiSpanHead(Head):
 
         expanded_token_representations = token_representations.unsqueeze(1).repeat(1, num_wordpieces, 1, 1)
 
-        #clamped_wordpiece_indices = 
-
-    def _get_logprobs_for_contrastive_training(self, gold_bio_seqs, contrastive_bio_seq, log_probs, mask):
-        """
-        Parameters:
-        -----------
-            gold_bio_seqs - Shape: (B, S, L)
-            contrastive_bio_seq = Shape: (B, L)  single bio-seq per instance
-            log_probs - Shape: (B, L, num-tags=3)
-            mask - Shape: (B, L)
-        Returns:
-        --------
-            renormalized_logprobs - Shape: (B, L, 3)
-
-        What we need to do:
-        1. Expand contrastive_bio_seq to replicate contrastive-seq for each possible gold-seq
-        2. Now, G=gold_bio_seqs and C=contrastive_bio_seq contain the possible tags for any given token
-        3. Need to create a tag-candidate mask M=(B, S, L, 3); where M[b, s, l, (G[b,s,l] || C[b,s,l])] = 1, i.e.
-           M(b, s, l, t) would be 1 for a t if G(b,s,l) == t or C(b, s, l) == t
-        4. re-normalize log_probs for each individual sequence based on its tag-candidates. This will re-size it
-           from (B, L, 3) to into a (B, S, L, 3) tensor
-        """
-        # Shape: (B, S, L)
-        contrastive_bio_seq_ex = contrastive_bio_seq.unsqueeze(1).expand_as(gold_bio_seqs)
-        device = log_probs.device
-
-        num_tags = log_probs.size()[-1]
-        # Shape: (B, S, L, 3) -- the tag_mask is unmasked for tags that appear
-        # either in the gold-answer or contrastive answer
-        tag_mask = torch.zeros([*contrastive_bio_seq_ex.size(), num_tags], device=device)
-        tag_mask.scatter_(3,
-                          gold_bio_seqs.unsqueeze(-1),
-                          torch.ones(gold_bio_seqs.size(), device=device).unsqueeze(-1))
-        tag_mask.scatter_(3,
-                          contrastive_bio_seq_ex.unsqueeze(-1),
-                          torch.ones(gold_bio_seqs.size(), device=device).unsqueeze(-1))
-
-        # Need to set tag_mask[(b, :, :, :] = 1 for any instance that does not have contrastive-seq. This would result
-        # in all tags to be candidates for such an instance, effectively yielding the renormalization ineffective.
-        # This would result in regular log-likelihood for that instance.
-        # Shape: (B) -- This mask would be 1 if no-contrastive-labels
-        contrastive_bio_mask = (contrastive_bio_seq.sum(1) == 0).float()
-        tag_mask = tag_mask + contrastive_bio_mask.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-        tag_mask = (tag_mask > 0).float()
-
-        # Shape: (B, S, L, 3)
-        expanded_log_probs = log_probs.unsqueeze(1).expand_as(tag_mask)
-        # Mask logprob for tags that are not in the gold or contrastive set
-        masked_log_probs = expanded_log_probs * tag_mask.float()
-        # Renormalize probablities for remaining tags -- if a token's `neighborhood` tag is the same as the gold,
-        # this renormalized prob would be 1.0
-        renormalized_probs = masked_softmax(masked_log_probs, tag_mask, memory_efficient=True)
-        # Replace masked-tag probability with epsilon before log
-        renormalized_probs = replace_masked_values(renormalized_probs,
-                                                   mask=tag_mask, replace_with=1e-32)
-        # Shape: (B, S, L, 3)
-        renormalized_logprobs = torch.log(renormalized_probs)
-        renormalized_logprobs = replace_masked_values(renormalized_logprobs, mask.unsqueeze(1).unsqueeze(3), 0.0)
-        return renormalized_logprobs
+        #clamped_wordpiece_indices =
 
     def gold_log_marginal_likelihood(self,
                                  gold_answer_representations: Dict[str, torch.LongTensor],
@@ -184,13 +126,13 @@ class MultiSpanHead(Head):
             log_marginal_likelihood = self._marginal_likelihood(gold_bio_seqs, log_probs)
         elif self._training_style == 'contrastive':
             contrastive_bio_seq = gold_answer_representations['contrastive_span_bio_labels']
-            # For instances where contrastive_bio_seq is masked; no renormalization would take place
-            # renormalized_logprobs = self._get_logprobs_for_contrastive_training(
-            #     gold_bio_seqs=gold_bio_seqs, contrastive_bio_seq=contrastive_bio_seq, log_probs=log_probs, mask=mask)
-            # log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, renormalized_logprobs)
-            log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, contrastive_bio_seq,
-                                                                            log_probs)
-
+            c_log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, contrastive_bio_seq,
+                                                                              log_probs)
+            mle_log_marginal_likelihood = self._marginal_likelihood(gold_bio_seqs, log_probs)
+            contrast_mask = self._get_contrast_mask(contrastive_bio_seq)
+            contrast_mask = contrast_mask.float()
+            # mle + m*ce
+            log_marginal_likelihood = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
         elif self._training_style == 'hard_em':
             log_marginal_likelihood = self._get_most_likely_likelihood(gold_bio_seqs, log_probs)
         else:
@@ -373,33 +315,11 @@ class MultiSpanHead(Head):
 
         return log_marginal_likelihood
 
-    # def _contrastive_marginal_likelihood(self,
-    #                                      bio_seqs: torch.LongTensor,
-    #                                      log_probs: torch.LongTensor):
-    #     """ There seems to require no change from _marginal_likelihood apart from removing the need to
-    #     resize log_probs in the same shape as bio_seqs
-    #     """
-    #
-    #     # bio_seqs - Shape: (batch_size, # of correct sequences, seq_length)
-    #     # log_probs - Shape: (batch_size, # of correct sequences, seq_length, 3)
-    #
-    #     # get the log-likelihood per each sequence index
-    #     # Shape: (batch_size, # of correct sequences, seq_length)
-    #     log_likelihoods = \
-    #             torch.gather(log_probs, dim=-1, index=bio_seqs.unsqueeze(-1)).squeeze(-1)
-    #
-    #     # Shape: (batch_size, # of correct sequences)
-    #     correct_sequences_pad_mask = (bio_seqs.sum(-1) > 0).long()
-    #
-    #     # Sum the log-likelihoods for each index to get the log-likelihood of the sequence
-    #     # Shape: (batch_size, # of correct sequences)
-    #     sequences_log_likelihoods = log_likelihoods.sum(dim=-1)
-    #     sequences_log_likelihoods = replace_masked_values(sequences_log_likelihoods, correct_sequences_pad_mask, -1e7)
-    #
-    #     # Sum the log-likelihoods for each sequence to get the marginalized log-likelihood over the correct answers
-    #     log_marginal_likelihood = logsumexp(sequences_log_likelihoods, dim=-1)
-    #
-    #     return log_marginal_likelihood
+    def _get_contrast_mask(self, contrastive_bio_seq: torch.LongTensor):
+        # Shape: (B)
+        contrastive_mask = (contrastive_bio_seq.sum(-1) > 0).long()
+        return contrastive_mask
+
 
     def _get_most_likely_likelihood(self,
                              bio_seqs: torch.LongTensor,

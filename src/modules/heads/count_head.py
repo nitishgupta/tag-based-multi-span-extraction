@@ -36,61 +36,95 @@ class CountHead(Head):
         }
         return output_dict
 
-    def _get_logprobs_for_contrastive_training(self, answer_as_counts, contrastive_answer_as_counts, log_probs):
+    def _get_contrast_mask(self, contrastive_answer_as_counts):
+        # contrastive_answer_as_counts : (B, C)
+        # contrast_mask: (B)
+        contrast_mask = (torch.max(contrastive_answer_as_counts, dim=1)[0] >= 0).long()
+        return contrast_mask
+
+    def get_renormalized_logprob(self, gold_logprobs, contrastive_logprobs, contrast_mask):
         """
-        Parameters:
-        -----------
-        answer_as_counts: `(B, A)` B=batch_size,  A=#-of-count-answers
-        contrastive_answer_as_counts: `(B, C)` B=batch_size,  A=#-of-count-answers
-        log_probs: (B, N) log-prob-distribution over all possible counts
+        gold_logprobs: (B, A)
+        contrastive_logprobs: (B, C)
+        contrast_mask: (B)
 
-        Returns:
-        renormalized_log_probs: (B, N)
+        output: renormalized_gold_logprobs:
         """
-        device = log_probs.device
+        batch_size, num_gold_counts = gold_logprobs.size()
+        _, num_contrast_spans = contrastive_logprobs.size()
 
-        # Idea is to create a (B, N) sized mask which is 1 for gold and contrastive count values, 0 otherwise
-        # TO achieve this, create two (B, N) masks, one each for gold and contrastive, and combine them
+        # This is exactly the same as single-span contrastive loss
+        # log(p(x)_CE) = log(p) - log(p(x) + p(x'))
+        # log(p(x) + p(x')) -- can be computed as log(exp(log(p(x))) + exp(log(p(x'))))
+        # That is, run logsumexp on gold_logprobs + contrastive_logprobs. Since for ever gold answer in gold_logprobs,
+        # we want to normalize over all contrastive_logprobs, we'll create a (B, A, C+1) sized-tensor where logsumexp
+        # would be performed on the last dimension.
+        # combined_logprob (B, A, C+1) would be concat of G=(B, A, 1) and C=(B, 1_ex, C).
 
-        # Shape: (B, C)
-        contrastive_answers_mask = (contrastive_answer_as_counts != -1).long()
-        # Replace -1 indices with 0
-        clamped_contrastive_counts = replace_masked_values(contrastive_answer_as_counts, contrastive_answers_mask, 0)
-        # Create tensor of binary values with v=0 for masked count values clamped as 1 above
-        values = (torch.ones(*contrastive_answers_mask.size(), device=device) * contrastive_answers_mask).long()
-        # Shape: (B, N)
-        count_mask_contrast = log_probs.new_zeros(*log_probs.size(), device=device).long()
-        count_mask_contrast.scatter_(1, clamped_contrastive_counts, values)
-        count_mask_contrast = (count_mask_contrast >= 1).long()
+        # Shape: (B, A, C)
+        contrastive_logprobs_ex = contrastive_logprobs.unsqueeze(1).expand((batch_size, num_gold_counts,
+                                                                            num_contrast_spans))
+        # Shape: (B, A, C+1)
+        combined_logprobs = torch.cat([gold_logprobs.unsqueeze(2), contrastive_logprobs_ex], dim=2)
+        # Shape: (B, A)
+        log_denominator = logsumexp(combined_logprobs, dim=2)
+        # log(p(x) + p(x')) = 0 for instances without contrastive labels
+        log_denominator = log_denominator * contrast_mask.unsqueeze(1).float()
+        # Shape: (B, A)
+        renormalized_logprob = gold_logprobs - log_denominator
 
-        # Whole row of count_mask_contrast would be zero if no contrastive counts; in such a case, make the whole row=1
-        # effectively performing no renormalization for such an instance
-        # Shape: (B) mask = 1 if instance does NOT have contrastive counts
-        contrast_mask = (count_mask_contrast.sum(1) == 0).long()
-        # If contrast_mask[i] == 1 (instance w/ no contrastive spans), then use original mask instead
-        count_mask_contrast = ((count_mask_contrast +
-                                (torch.ones(*log_probs.size(), device=device) * contrast_mask.unsqueeze(1)))
-                               >= 1).long()
+        return renormalized_logprob
 
-        # Similar mask for gold count values
-        gold_answers_mask = (answer_as_counts != -1).long()
-        # Replace -1 indices with 0
-        clamped_gold_counts = replace_masked_values(answer_as_counts, gold_answers_mask, 0)
-        # Create tensor of binary values with v=0 for masked count values clamped as 1 above
-        values = (torch.ones(*gold_answers_mask.size(), device=device) * gold_answers_mask).long()
-        # Shape: (B, N)
-        count_mask_gold = log_probs.new_zeros(*log_probs.size(), device=device).long()
-        count_mask_gold.scatter_(1, clamped_gold_counts, values)
-        count_mask_gold = (count_mask_gold >= 1).long()
-        # Shape: (B, N)
-        count_candidate_mask = ((count_mask_gold + count_mask_contrast) >= 1).long()
 
-        renormalized_probs = masked_softmax(log_probs, count_candidate_mask, memory_efficient=True)
-        renormalized_probs = replace_masked_values(renormalized_probs,
-                                                   mask=count_candidate_mask, replace_with=1e-32)
-        renormalized_logprobs = torch.log(renormalized_probs)
+    def _get_countanswer_logprobs(self, answer_as_counts, log_probs):
+        """
+        answer_as_counts: (B, A)
+        log_probs: (B, 10)
 
-        return renormalized_logprobs
+        log_likelihood_for_counts: (B, A)
+        """
+        # Count answers are padded with label -1,
+        # so we clamp those paddings to 0 and then mask after `torch.gather()`.
+        # Shape: (batch_size, # of count answers)
+        gold_count_mask = (answer_as_counts != -1).long()
+        # Shape: (batch_size, # of count answers)
+        clamped_gold_counts = replace_masked_values(answer_as_counts, gold_count_mask, 0)
+        log_likelihood_for_counts = torch.gather(log_probs, 1, clamped_gold_counts)
+        # For those padded spans, we set their log probabilities to be very small negative value
+        log_likelihood_for_counts = \
+            replace_masked_values(log_likelihood_for_counts, gold_count_mask, -1e7)
+
+        return log_likelihood_for_counts
+
+
+    def _get_contrastive_loss(self, answer_as_counts, contrastive_answer_as_counts, log_probs):
+        """
+        answer_as_counts: (B, A)
+        contrastive_answer_as_counts: (B, C)
+        log_probs: (B, 10)
+        """
+
+        # (B, A)
+        gold_count_logprobs = self._get_countanswer_logprobs(answer_as_counts, log_probs)
+        # (B, C)
+        contrast_count_logprobs = self._get_countanswer_logprobs(contrastive_answer_as_counts, log_probs)
+
+        # Shape: (B)
+        contrast_mask = self._get_contrast_mask(contrastive_answer_as_counts)
+
+        # Shape: (B, A)
+        renormalized_logprobs = self.get_renormalized_logprob(gold_count_logprobs, contrast_count_logprobs,
+                                                              contrast_mask)
+
+        # Shape: (B, A)
+        gold_count_mask = (answer_as_counts != -1).long()
+
+        renormalized_logprobs = \
+            replace_masked_values(renormalized_logprobs, gold_count_mask, -1e7)
+
+        log_marginal_likelihood = logsumexp(renormalized_logprobs)
+
+        return log_marginal_likelihood
 
 
     def gold_log_marginal_likelihood(self,
@@ -99,12 +133,6 @@ class CountHead(Head):
                                  number_indices: torch.LongTensor,
                                  **kwargs: Any):
         answer_as_counts = gold_answer_representations['answer_as_counts']
-
-        if self._training_style == "contrastive":
-            # Shape:
-            contrastive_answer_as_counts = gold_answer_representations["contrastive_answer_as_counts"]
-            log_probs = self._get_logprobs_for_contrastive_training(answer_as_counts, contrastive_answer_as_counts,
-                                                                    log_probs)
 
         # Count answers are padded with label -1,
         # so we clamp those paddings to 0 and then mask after `torch.gather()`.
@@ -116,8 +144,21 @@ class CountHead(Head):
         # For those padded spans, we set their log probabilities to be very small negative value
         log_likelihood_for_counts = \
             replace_masked_values(log_likelihood_for_counts, gold_count_mask, -1e7)
-        # Shape: (batch_size, )
-        log_marginal_likelihood = logsumexp(log_likelihood_for_counts)
+
+        if self._training_style == 'contrastive':
+            contrastive_answer_as_counts = gold_answer_representations["contrastive_answer_as_counts"]
+            c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_counts, contrastive_answer_as_counts,
+                                                                   log_probs)
+            mle_log_marginal_likelihood = logsumexp(log_likelihood_for_counts)
+            contrast_mask = self._get_contrast_mask(contrastive_answer_as_counts)
+            contrast_mask = contrast_mask.float()
+            # mle + m*ce
+            log_marginal_likelihood = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
+        else:
+            # Shape: (batch_size, )
+            log_marginal_likelihood = logsumexp(log_likelihood_for_counts)
+
+
         return log_marginal_likelihood
 
     def decode_answer(self,

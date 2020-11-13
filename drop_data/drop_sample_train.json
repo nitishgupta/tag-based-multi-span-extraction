@@ -21,7 +21,7 @@
                         "year": ""
                     },
                     "spans": [
-                        "1", "2"
+                        "9"
                     ]
                 },
                 "query_id": "f16c0ee7-f131-4a8b-a6ac-4d275ea68066"
@@ -36,6 +36,17 @@
                         "year": ""
                     },
                     "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "5"
+                    ]
                 },
                 "query_id": "c9582e03-b01b-42ed-83e0-b90a5334aefa"
             },
@@ -106,12 +117,30 @@
                     },
                     "spans": []
                 },
+                "contrastive_answer": {
+                    "number": "8",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
                 "query_id": "99a50d10-ec43-4040-8c8e-2eb5bafe1906"
             },
             {
                 "question": "How many yards was the shortest touchdown scoring play?",
                 "answer": {
                     "number": "1",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "7",
                     "date": {
                         "day": "",
                         "month": "",
@@ -127,6 +156,15 @@
                 "question": "How many touchdowns were scored in the second quarter?",
                 "answer": {
                     "number": "3",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "2",
                     "date": {
                         "day": "",
                         "month": "",
@@ -182,6 +220,15 @@
                     "spans": [],
                     "worker_id": "",
                     "hit_id": ""
+                },
+                "contrastive_answer": {
+                    "number": "9",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
                 },
                 "query_id": "2f4bb460-7f65-411f-9cd3-b3653a534942",
                 "highlights": [],
