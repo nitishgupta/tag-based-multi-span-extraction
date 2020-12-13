@@ -133,6 +133,33 @@ class MultiSpanHead(Head):
             contrast_mask = contrast_mask.float()
             # mle + m*ce
             log_marginal_likelihood = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
+        elif self._training_style == 'only_contrastive':
+            contrastive_bio_seq = gold_answer_representations['contrastive_span_bio_labels']
+            c_log_marginal_likelihood = self._contrastive_marginal_likelihood(gold_bio_seqs, contrastive_bio_seq,
+                                                                              log_probs)
+            contrast_mask = self._get_contrast_mask(contrastive_bio_seq)
+            c_log_marginal_likelihood = replace_masked_values(c_log_marginal_likelihood, contrast_mask, 1e-7)
+            log_marginal_likelihood = c_log_marginal_likelihood
+
+        # elif self._training_style == 'topk_contrastive':
+        #     print(question_and_passage_mask[0].size())
+        #     print(passage_mask.size())
+        #     print(first_wordpiece_mask.size())
+        #     print(log_probs.size())
+        #
+        #     mask = self._get_mask(question_and_passage_mask[0], passage_mask[0], first_wordpiece_mask[0])
+        #     masked_indices = mask.nonzero().squeeze()
+        #     print(mask)
+        #     print(masked_indices)
+        #     print(masked_indices.size())
+        #
+        #     masked_log_probs = log_probs[0][masked_indices]
+        #     topk_masked_predicted_tags = torch.Tensor(viterbi_tags(masked_log_probs.unsqueeze(0),
+        #                                                            transitions=self._transitions,
+        #                                                            constraint_mask=self._constraint_mask, top_k=10))
+        #     import pdb
+        #     pdb.set_trace()
+
         elif self._training_style == 'hard_em':
             log_marginal_likelihood = self._get_most_likely_likelihood(gold_bio_seqs, log_probs)
         else:

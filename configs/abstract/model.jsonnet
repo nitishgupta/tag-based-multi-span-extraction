@@ -129,7 +129,7 @@
     "validation_data_path": error "Must override validation_data_path",
     "trainer": {
         "cuda_device": 0,
-        "keep_serialized_model_every_num_seconds": 3600,
+        "num_serialized_models_to_keep": 1,
         "num_epochs": 35,
         "optimizer": {
             "type": "bert_adam",

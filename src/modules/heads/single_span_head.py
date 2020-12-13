@@ -193,6 +193,13 @@ class SingleSpanHead(Head):
             contrast_mask = contrast_mask.float()
             # mle + m*ce
             log_marginal_likelihood_for_span = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
+        elif self._training_style == 'only_contrastive':
+            contrastive_answer_as_spans = self.get_contrastive_answer_representations(gold_answer_representations)
+            c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_spans, contrastive_answer_as_spans,
+                                                                   start_log_probs, end_log_probs)
+            contrast_mask = self._get_contrast_mask(contrastive_answer_as_spans)
+            c_log_marginal_likelihood = replace_masked_values(c_log_marginal_likelihood, contrast_mask, 1e-7)
+            log_marginal_likelihood_for_span = c_log_marginal_likelihood
         elif self._training_style == 'hard_em':
             most_likely_span_index = log_likelihood_for_spans.argmax(dim=-1)
             log_marginal_likelihood_for_span = log_likelihood_for_spans.gather(dim=1, index=most_likely_span_index.unsqueeze(-1)).squeeze(dim=-1)
