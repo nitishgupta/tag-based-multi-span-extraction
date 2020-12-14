@@ -4,7 +4,7 @@ config {
     "pretrained_model": "bert-base-uncased",
     "bert_dim": 768,
 
-    "multi_span_training_style": "contrastive",
+    "multi_span_training_style": "topk_contrastive",
     "pspan_span_training_style": "contrastive",
     "qspan_span_training_style": "contrastive",
     "count_training_style": "contrastive",
@@ -26,5 +26,6 @@ config {
     "dataset_reader"+: {
         "max_instances": 100
     },
-
 }
+
+// rm -rf /tmp/drop/; allennlp train configs/drop/bert/drop_sample.jsonnet -s /tmp/drop --include-package src

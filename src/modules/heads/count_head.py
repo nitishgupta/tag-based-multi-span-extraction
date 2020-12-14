@@ -154,10 +154,16 @@ class CountHead(Head):
             contrast_mask = contrast_mask.float()
             # mle + m*ce
             log_marginal_likelihood = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
+        elif self._training_style == 'only_contrastive':
+            contrastive_answer_as_counts = gold_answer_representations["contrastive_answer_as_counts"]
+            c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_counts, contrastive_answer_as_counts,
+                                                                   log_probs)
+            contrast_mask = self._get_contrast_mask(contrastive_answer_as_counts)
+            c_log_marginal_likelihood = replace_masked_values(c_log_marginal_likelihood, contrast_mask, 1e-7)
+            log_marginal_likelihood = c_log_marginal_likelihood
         else:
             # Shape: (batch_size, )
             log_marginal_likelihood = logsumexp(log_likelihood_for_counts)
-
 
         return log_marginal_likelihood
 
