@@ -47,8 +47,6 @@ class SingleSpanHead(Head):
         return output_dict
 
     def get_span_endpoint_logprobs(self, start_log_probs, end_log_probs, answer_as_spans):
-
-
         # Shape: (B, A)
         gold_span_starts = answer_as_spans[:, :, 0]
         gold_span_ends = answer_as_spans[:, :, 1]
@@ -93,7 +91,7 @@ class SingleSpanHead(Head):
         # In the output, every element (b, a) should have been normalized with [(b, a) + (b, :)] as the denominator
         # log(p(x)_CE) = log(p) - log(p(x) + p(x'))
         # log(p(x) + p(x')) -- can be computed as log(exp(log(p(x))) + exp(log(p(x'))))
-        # That is, run logsumexp on gold_logprobs + contrastive_logprobs. Since for ever gold answer in gold_logprobs,
+        # That is, run logsumexp on [gold_logprobs, contrastive_logprobs]. Since for ever gold answer in gold_logprobs,
         # we want to normalize over all contrastive_logprobs, we'll create a (B, A, C+1) sized-tensor where logsumexp
         # would be performed on the last dimension.
         # combined_logprob (B, A, C+1) would be concat of G=(B, A, 1) and C=(B, 1_ex, C).
@@ -187,7 +185,7 @@ class SingleSpanHead(Head):
         elif self._training_style == 'contrastive':
             contrastive_answer_as_spans = self.get_contrastive_answer_representations(gold_answer_representations)
             c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_spans, contrastive_answer_as_spans,
-                                                                             start_log_probs, end_log_probs)
+                                                                   start_log_probs, end_log_probs)
             mle_log_marginal_likelihood = logsumexp(log_likelihood_for_spans)
             contrast_mask = self._get_contrast_mask(contrastive_answer_as_spans)
             contrast_mask = contrast_mask.float()
@@ -200,6 +198,43 @@ class SingleSpanHead(Head):
             contrast_mask = self._get_contrast_mask(contrastive_answer_as_spans)
             c_log_marginal_likelihood = replace_masked_values(c_log_marginal_likelihood, contrast_mask, 1e-7)
             log_marginal_likelihood_for_span = c_log_marginal_likelihood
+        elif self._training_style == 'topk_contrastive':
+            # (B, A)
+            gold_span_starts = answer_as_spans[:, :, 0]
+            gold_span_ends = answer_as_spans[:, :, 1]
+            # (B, K)
+            _, topk_start_indices = torch.topk(start_log_probs, k=10, dim=-1)
+            _, topk_end_indices = torch.topk(end_log_probs, k=10, dim=-1)
+
+            batch_size, numg = gold_span_starts.size()
+            _, numk = topk_start_indices.size()
+
+            # Shape: (B, K, A)
+            gold_start_ex = gold_span_starts.unsqueeze(1).expand(batch_size, numk, numg)
+            gold_end_ex = gold_span_ends.unsqueeze(1).expand(batch_size, numk, numg)
+            topk_starts_ex = topk_start_indices.unsqueeze(2).expand(batch_size, numk, numg)
+            topk_ends_ex = topk_end_indices.unsqueeze(2).expand(batch_size, numk, numg)
+
+            # Shape: (B, K)
+            topk_start_mask = (gold_start_ex != topk_starts_ex).long().prod(2)
+            topk_end_mask = (gold_end_ex != topk_ends_ex).long().prod(2)
+            topk_mask = topk_start_mask * topk_end_mask
+
+            topk_start_indices = replace_masked_values(topk_start_indices, topk_mask, -1)
+            topk_end_indices = replace_masked_values(topk_end_indices, topk_mask, -1)
+
+            # Shape: (B, K, 2)
+            topk_contrastive_as_spans = torch.cat([topk_start_indices.unsqueeze(2), topk_end_indices.unsqueeze(2)],
+                                                  dim=2)
+
+            c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_spans, topk_contrastive_as_spans,
+                                                                   start_log_probs, end_log_probs)
+            mle_log_marginal_likelihood = logsumexp(log_likelihood_for_spans)
+
+            contrast_mask = self._get_contrast_mask(topk_contrastive_as_spans)
+            contrast_mask = contrast_mask.float()
+            # mle + m*ce
+            log_marginal_likelihood_for_span = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
         elif self._training_style == 'hard_em':
             most_likely_span_index = log_likelihood_for_spans.argmax(dim=-1)
             log_marginal_likelihood_for_span = log_likelihood_for_spans.gather(dim=1, index=most_likely_span_index.unsqueeze(-1)).squeeze(dim=-1)
@@ -207,6 +242,7 @@ class SingleSpanHead(Head):
             raise Exception("Illegal training_style")
 
         return log_marginal_likelihood_for_span
+
 
     def decode_answer(self,
                       qp_tokens: torch.LongTensor,

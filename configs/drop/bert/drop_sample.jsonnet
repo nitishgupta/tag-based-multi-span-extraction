@@ -5,9 +5,9 @@ config {
     "bert_dim": 768,
 
     "multi_span_training_style": "topk_contrastive",
-    "pspan_span_training_style": "contrastive",
-    "qspan_span_training_style": "contrastive",
-    "count_training_style": "contrastive",
+    "pspan_span_training_style": "topk_contrastive",
+    "qspan_span_training_style": "topk_contrastive",
+    "count_training_style": "topk_contrastive",
     "arithmetic_training_style": "soft_em",
 
     "iterator"+: {
