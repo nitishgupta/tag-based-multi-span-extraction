@@ -1,11 +1,13 @@
 from typing import Any, Dict, List, Optional, Union
 import logging
+import os
 
 import torch
 
 from allennlp.data import Vocabulary
 from allennlp.models.model import Model
 from allennlp.models.reading_comprehension.util import get_best_span
+from allennlp.models.archival import load_archive, Archive
 from allennlp.modules import FeedForward
 from allennlp.nn import util, InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import masked_softmax
@@ -29,7 +31,8 @@ class MultiHeadModel(Model):
                 training_evaluation: bool = True,
                 output_all_answers: bool = False,
                 initializer: InitializerApplicator = InitializerApplicator(),
-                regularizer: Optional[RegularizerApplicator] = None) -> None:
+                regularizer: Optional[RegularizerApplicator] = None,
+                model_to_initialize_from: Optional[str] = None) -> None:
         super().__init__(vocab, regularizer)
 
         self._pretrained_model = pretrained_model
@@ -47,6 +50,16 @@ class MultiHeadModel(Model):
         self._metrics = CustomEmAndF1(dataset_name)
 
         initializer(self)
+        if model_to_initialize_from and os.path.isfile(model_to_initialize_from):
+            logger.info(f"Reading model archive at {model_to_initialize_from} to initialize weights from it.")
+            archive = load_archive(model_to_initialize_from)
+            model_parameters = dict(self.named_parameters())
+            archived_parameters = dict(archive.model.named_parameters())
+            for name, weights in archived_parameters.items():
+                new_weights = weights.data
+                logger.info("Copying parameter %s", name)
+                model_parameters[name].data.copy_(new_weights)
+
 
     def heads_indices(self):
         return list(self._heads.keys())
