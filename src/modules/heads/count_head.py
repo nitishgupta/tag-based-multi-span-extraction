@@ -161,6 +161,24 @@ class CountHead(Head):
             contrast_mask = self._get_contrast_mask(contrastive_answer_as_counts)
             c_log_marginal_likelihood = replace_masked_values(c_log_marginal_likelihood, contrast_mask, 1e-7)
             log_marginal_likelihood = c_log_marginal_likelihood
+        elif self._training_style == 'topk_contrastive':
+            _, topk_counts = torch.topk(log_probs, k=4, dim=-1)
+            batch_size, numg = answer_as_counts.size()
+            _, numk = topk_counts.size()
+            # Shape: (B, K, A)
+            gold_counts_ex = answer_as_counts.unsqueeze(1).expand(batch_size, numk, numg)
+            topk_counts_ex = topk_counts.unsqueeze(2).expand(batch_size, numk, numg)
+            # Shape: (B, K)
+            topk_counts_mask = (gold_counts_ex != topk_counts_ex).long().prod(2)
+            topk_counts = replace_masked_values(topk_counts, topk_counts_mask, -1)
+
+            c_log_marginal_likelihood = self._get_contrastive_loss(answer_as_counts, topk_counts,
+                                                                   log_probs)
+            mle_log_marginal_likelihood = logsumexp(log_likelihood_for_counts)
+            contrast_mask = self._get_contrast_mask(topk_counts)
+            contrast_mask = contrast_mask.float()
+            # mle + m*ce
+            log_marginal_likelihood = mle_log_marginal_likelihood + (contrast_mask * c_log_marginal_likelihood)
         else:
             # Shape: (batch_size, )
             log_marginal_likelihood = logsumexp(log_likelihood_for_counts)

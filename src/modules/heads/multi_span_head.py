@@ -141,24 +141,39 @@ class MultiSpanHead(Head):
             c_log_marginal_likelihood = replace_masked_values(c_log_marginal_likelihood, contrast_mask, 1e-7)
             log_marginal_likelihood = c_log_marginal_likelihood
 
-        # elif self._training_style == 'topk_contrastive':
-        #     print(question_and_passage_mask[0].size())
-        #     print(passage_mask.size())
-        #     print(first_wordpiece_mask.size())
-        #     print(log_probs.size())
-        #
-        #     mask = self._get_mask(question_and_passage_mask[0], passage_mask[0], first_wordpiece_mask[0])
-        #     masked_indices = mask.nonzero().squeeze()
-        #     print(mask)
-        #     print(masked_indices)
-        #     print(masked_indices.size())
-        #
-        #     masked_log_probs = log_probs[0][masked_indices]
-        #     topk_masked_predicted_tags = torch.Tensor(viterbi_tags(masked_log_probs.unsqueeze(0),
-        #                                                            transitions=self._transitions,
-        #                                                            constraint_mask=self._constraint_mask, top_k=10))
-        #     import pdb
-        #     pdb.set_trace()
+        elif self._training_style == 'topk_contrastive':
+            batch_size, passage_len, numtags = log_probs.size()
+            # Contains a list of (k, passage_len) decoded BIO tags
+            topk_log_marginal_likelihood = log_probs.new_zeros(batch_size)
+            for i in range(batch_size):
+                mask = self._get_mask(question_and_passage_mask[i], passage_mask[i], first_wordpiece_mask[i])
+                # Shape: (truncated_passage_len)
+                masked_indices = mask.nonzero().squeeze()
+                masked_log_probs = log_probs[i][masked_indices]
+                # Shape: (1, k, truncated_passage_len)
+                topk_masked_predicted_tags = torch.Tensor(viterbi_tags(masked_log_probs.unsqueeze(0),
+                                                          transitions=self._transitions,
+                                                          constraint_mask=self._constraint_mask, top_k=20)).to(
+                    log_probs.device)
+                topk_masked_predicted_tags = topk_masked_predicted_tags.squeeze(0)
+                num_decodings = topk_masked_predicted_tags.size()[0]
+                # Now we need to scatter topk_masked_predicted_tags into tags at the indices from masked_indices
+                # Shape: (k, passage_len)
+                tags = topk_masked_predicted_tags.new_zeros(num_decodings, passage_len)
+                tags.scatter_(1, masked_indices.unsqueeze(0), topk_masked_predicted_tags)
+                # We know need to prune `batch_tags` to the decoded tags that don't overlap with the gold_bio_seqs
+                # Shape: (num_seqs, passage_len)
+                nonoverlapping_seqs = self._non_overlapping(gold_bio_seqs[i], tags)
+
+                instance_topk_likelihood = self._topk_contrastive_marginal_likelihood(
+                    bio_seqs=gold_bio_seqs[i, :, :].unsqueeze(0),
+                    contrastive_bio_seq=nonoverlapping_seqs.unsqueeze(0).long(),
+                    log_probs=log_probs[i, :].unsqueeze(0)
+                ).squeeze(0).item()
+                topk_log_marginal_likelihood[i] += instance_topk_likelihood
+
+            mle_log_marginal_likelihood = self._marginal_likelihood(gold_bio_seqs, log_probs)
+            log_marginal_likelihood = mle_log_marginal_likelihood + topk_log_marginal_likelihood
 
         elif self._training_style == 'hard_em':
             log_marginal_likelihood = self._get_most_likely_likelihood(gold_bio_seqs, log_probs)
@@ -169,6 +184,32 @@ class MultiSpanHead(Head):
         log_marginal_likelihood = replace_masked_values(log_marginal_likelihood, is_bio_mask, -1e7)
 
         return log_marginal_likelihood
+
+    def _non_overlapping(self, gold_seqs, decoded_seqs):
+        """Prune decoded_seqs to ones that don't overlap with gold_seqs.
+
+        gold_seqs, decoded_seqs: both shaped (num_seqs, passage_len)
+        """
+
+        # Shape: (num_gold, passage_len)
+        gold_seqs_mask = (gold_seqs > 0)
+
+        num_decodings, passage_len = decoded_seqs.size()
+        nonoverlapping_seqs = []
+        for i in range(num_decodings):
+            # Shape: (1, passage_len)
+            decoded_seq_mask = (decoded_seqs[i, :] > 0).unsqueeze(0)
+
+            intersection = (decoded_seq_mask & gold_seqs_mask).sum()
+            if not intersection > 0:
+                nonoverlapping_seqs.append(decoded_seqs[i, :].unsqueeze(0))
+        if len(nonoverlapping_seqs) > 0:
+            nonoverlapping_seqs = torch.cat(nonoverlapping_seqs, dim=0)
+        else:
+            nonoverlapping_seqs = decoded_seqs.new_zeros(1, passage_len)
+        return nonoverlapping_seqs
+
+
 
     def decode_answer(self,
                       log_probs: torch.LongTensor,
@@ -187,7 +228,7 @@ class MultiSpanHead(Head):
         masked_log_probs = log_probs[masked_indices]
 
         if prediction_method == 'viterbi':
-            top_two_masked_predicted_tags = torch.Tensor(viterbi_tags(masked_log_probs.unsqueeze(0), 
+            top_two_masked_predicted_tags = torch.Tensor(viterbi_tags(masked_log_probs.unsqueeze(0),
                                                               transitions=self._transitions, 
                                                               constraint_mask=self._constraint_mask, top_k=2))
             masked_predicted_tags = top_two_masked_predicted_tags[0,0,:]
@@ -309,7 +350,6 @@ class MultiSpanHead(Head):
         sequences_log_likelihoods = log_likelihoods.sum(dim=-1)
         sequences_log_likelihoods = replace_masked_values(sequences_log_likelihoods, correct_sequences_pad_mask, -1e7)
 
-
         # Shape: (B, L)
         contrastive_log_likelihoods = torch.gather(log_probs, dim=-1,
                                                    index=contrastive_bio_seq.unsqueeze(-1)).squeeze(-1)
@@ -323,7 +363,7 @@ class MultiSpanHead(Head):
         # Now we'll perform renormalization: p(x)' = p(x)/(p(x) + p(x'))
         # log(p(x)') = log(p(x)) - log(p(x) + p(x'))
         # instead of computing second term as probabilities, we can do logsumexp
-        # log(p(x) + p(x')) = log(exp(log(p(x)) + log(exp(p(x')))
+        # log(p(x) + p(x')) = log( exp(log(p(x)) + exp(log(p(x'))) )
         # For this, we'll construct a [B, G, 2] by concat-ing sequences_log_likelihoods and contrastive_seq_likelihood
         # then perform logsumexp along the dim=-1
         # Shape: (B, G, 2)
@@ -341,6 +381,65 @@ class MultiSpanHead(Head):
         log_marginal_likelihood = logsumexp(renormalized_log_likelihoods, dim=-1)
 
         return log_marginal_likelihood
+
+
+    def _topk_contrastive_marginal_likelihood(self,
+                                              bio_seqs: torch.LongTensor,
+                                              contrastive_bio_seq: torch.LongTensor,
+                                              log_probs: torch.LongTensor):
+        # bio_seqs - Shape: (batch_size, # of correct sequences, seq_length)
+        # contrastive_bio_seq - Shape: (batch_size, k, seq_length); k = num of contrastive seqs
+        # log_probs - Shape: (batch_size, seq_length, 3)
+        device = log_probs.device
+        batch_size = log_probs.size()[0]
+        num_gold_seqs = bio_seqs.size()[1]
+        # Shape: (B, G, L, 3) duplicate log_probs for each gold bios sequence
+        expanded_log_probs = log_probs.unsqueeze(1).expand(-1, num_gold_seqs, -1, -1)
+        # Shape: (B, G, L) get the log-likelihood per each sequence index
+        log_likelihoods = \
+            torch.gather(expanded_log_probs, dim=-1, index=bio_seqs.unsqueeze(-1)).squeeze(-1)
+        # Shape: (B, G) -- sequence mask
+        correct_sequences_pad_mask = (bio_seqs.sum(-1) > 0).long()
+        # Shape: (B, G) Sum the log-likelihoods for each index to get the log-likelihood of the sequence
+        sequences_log_likelihoods = log_likelihoods.sum(dim=-1)
+        sequences_log_likelihoods = replace_masked_values(sequences_log_likelihoods, correct_sequences_pad_mask, -1e7)
+        num_gold_seqs = sequences_log_likelihoods.size()[1]
+
+        num_k = contrastive_bio_seq.size()[1]
+        expanded_log_probs = log_probs.unsqueeze(1).expand(-1, num_k, -1, -1)
+        # Shape: (B, K, L)
+        contrastive_log_likelihoods = \
+            torch.gather(expanded_log_probs, dim=-1, index=contrastive_bio_seq.unsqueeze(-1)).squeeze(-1)
+        # Shape: (B, K)
+        contrastive_seq_likelihood = contrastive_log_likelihoods.sum(dim=-1)
+        # Shape: (B, K)
+        contrastive_mask = (contrastive_bio_seq.sum(-1) > 0).long()
+        contrastive_seq_likelihood = replace_masked_values(contrastive_seq_likelihood, contrastive_mask, -1e32)
+
+        # Shape: (B, G, K)
+        contrastive_seq_likelihood_ex = contrastive_seq_likelihood.unsqueeze(1).expand(batch_size, num_gold_seqs, num_k)
+        # Now we'll perform renormalization: p(x)' = p(x)/(p(x) + p(x'))
+        # log(p(x)') = log(p(x)) - log(p(x) + p(x'))
+        # instead of computing second term as probabilities, we can do logsumexp
+        # log(p(x) + p(x')) = log( exp(log(p(x)) + exp(log(p(x'))) )
+        # For this, we'll construct a [B, G, 2] by concat-ing sequences_log_likelihoods and contrastive_seq_likelihood
+        # then perform logsumexp along the dim=-1
+        # Shape: (B, G, K+1)
+        combined_loglikelihoods_concat = torch.cat([sequences_log_likelihoods.unsqueeze(2),
+                                                    contrastive_seq_likelihood_ex], dim=2)
+        # Shape: (B, G) -- log(p(x) + p(x'))
+        combined_loglikelihoods = logsumexp(combined_loglikelihoods_concat, dim=-1)
+        # # Instances (rows) without contrastive-examples would be zero, i.e. log(p(x) + p(x')) = 0; no renormalization
+        # combined_loglikelihoods = combined_loglikelihoods * contrastive_mask.unsqueeze(1)
+        # Shape: (B, G)
+        renormalized_log = sequences_log_likelihoods - combined_loglikelihoods
+        renormalized_log_likelihoods = replace_masked_values(renormalized_log, correct_sequences_pad_mask, -1e7)
+
+        # Sum the log-likelihoods for each sequence to get the marginalized log-likelihood over the correct answers
+        log_marginal_likelihood = logsumexp(renormalized_log_likelihoods, dim=-1)
+
+        return log_marginal_likelihood
+
 
     def _get_contrast_mask(self, contrastive_bio_seq: torch.LongTensor):
         # Shape: (B)
