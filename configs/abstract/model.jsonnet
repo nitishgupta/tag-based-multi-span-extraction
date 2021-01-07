@@ -123,7 +123,8 @@
         },
         "passage_summary_vector_module": summary_module,
         "question_summary_vector_module": summary_module,
-        "heads": error "Must override model.heads"
+        "heads": error "Must override model.heads",
+        "training_style": "vanilla"
     },
     "train_data_path": error "Must override train_data_path",
     "validation_data_path": error "Must override validation_data_path",
