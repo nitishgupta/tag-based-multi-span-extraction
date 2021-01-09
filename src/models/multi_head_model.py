@@ -253,7 +253,7 @@ class MultiHeadModel(Model):
                     contrastive_marginal_log_likelihood = contrastive_log_marginal_likelihood_list[0]
 
                 # log(p(g)_contrastive) = log(p(g)) - log(p(g) + p(c))
-                # log(p(g) + p(c)) = logsumexp(p(g), p(c))
+                # log(p(g) + p(c)) = logsumexp([p(g), p(c)])
                 concatenated_logprobs = torch.cat([marginal_log_likelihood.unsqueeze(1),
                                                    contrastive_marginal_log_likelihood.unsqueeze(1)], dim=1)
                 log_denominator = util.logsumexp(concatenated_logprobs, dim=-1)
