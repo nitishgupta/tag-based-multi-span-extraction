@@ -4,11 +4,15 @@ config {
     "pretrained_model": "bert-base-uncased",
     "bert_dim": 768,
 
-    "multi_span_training_style": "topk_contrastive",
-    "pspan_span_training_style": "topk_contrastive",
-    "qspan_span_training_style": "topk_contrastive",
-    "count_training_style": "topk_contrastive",
+    "multi_span_training_style": "soft_em",
+    "pspan_span_training_style": "soft_em",
+    "qspan_span_training_style": "soft_em",
+    "count_training_style": "soft_em",
     "arithmetic_training_style": "soft_em",
+
+    "model"+: {
+        "training_style": "contrastive"
+    },
 
     "iterator"+: {
         "batch_size": 2

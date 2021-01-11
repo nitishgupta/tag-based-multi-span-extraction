@@ -4,11 +4,15 @@ config {
     "pretrained_model": "bert-large-uncased-whole-word-masking",
     "bert_dim": 1024,
 
-    "multi_span_training_style": "topk_contrastive",
-    "pspan_span_training_style": "topk_contrastive",
-    "qspan_span_training_style": "topk_contrastive",
-    "count_training_style": "topk_contrastive",
+    "multi_span_training_style": "soft_em",
+    "pspan_span_training_style": "soft_em",
+    "qspan_span_training_style": "soft_em",
+    "count_training_style": "soft_em",
     "arithmetic_training_style": "soft_em",
+
+    "model"+: {
+        "training_style": "contrastive"
+    },
 
     "iterator"+: {
         "batch_size": 2
@@ -23,7 +27,7 @@ config {
     "dataset_reader"+: {
         "max_instances": -1
     },
-    "train_data_path": "drop_data/drop_dataset_train.json",
+    "train_data_path": "drop_data/drop_dataset_train_topkv1.json",
     "validation_data_path": "drop_data/drop_dataset_dev.json",
 
     "model"+: {

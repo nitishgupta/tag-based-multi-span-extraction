@@ -214,7 +214,17 @@ def find_valid_spans(text: str, answer_texts: List[str],
 
     valid_spans = set()
     for answer_text in answer_texts_set:
+        if not answer_text:
+            continue
         start_indexes = find_all(answer_text, text)
+        # print("-------")
+        # print("|{}|".format(answer_text))
+        # print("-------")
+        # print(text)
+        # print("-------")
+        # print(start_indexes)
+        # print("-------")
+        # print()
         for start_index in start_indexes:
             start_token_index = text_index_to_token_index[start_index]
             end_token_index = text_index_to_token_index[start_index + len(answer_text) - 1]

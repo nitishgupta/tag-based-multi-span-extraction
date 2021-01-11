@@ -6,6 +6,7 @@ from allennlp.nn.util import replace_masked_values, logsumexp
 from allennlp.modules import FeedForward
 
 from src.modules.heads.head import Head
+from src.modules.utils.viterbi_decoding import allowed_transitions, viterbi_tags
 
 @Head.register('arithmetic_head')
 class ArithmeticHead(Head):
@@ -130,6 +131,46 @@ class ArithmeticHead(Head):
             'value': predicted_answer,
             'numbers': numbers
         }
+        return answer_dict
+
+    def decode_topk_answers(self,
+                            log_probs: torch.Tensor,
+                            k: int,
+                            original_numbers: List[Union[int, float]],
+                            number_indices: torch.LongTensor,
+                            best_signs_for_numbers: torch.LongTensor,
+                            **kwargs: Dict[str, Any]) -> Dict[str, Any]:
+
+        sign_remap = {0: 0, 1: 1, 2: -1}
+        original_numbers = self._special_numbers + original_numbers
+
+        number_mask = self._get_mask(number_indices.unsqueeze(0), with_special_numbers=True)
+        # log_probs: (# of numbers in the passage, 3)
+        transitions = torch.ones(3, 3).to(log_probs.device)
+        contraint_mask = torch.ones(5, 5).to(log_probs.device)
+
+        topk_tags = torch.Tensor(viterbi_tags(log_probs.unsqueeze(0),
+                                              transitions=transitions,
+                                              constraint_mask=contraint_mask,
+                                              top_k=k)).to(log_probs.device)
+        topk_tags = topk_tags[0, :, :]
+        predicted_answers = []
+        predicted_logprobs = []
+        for predicted_tags in topk_tags:
+            predicted_signs = [sign_remap[it] for it in predicted_tags.detach().cpu().numpy()]
+            result = sum([sign * number for sign, number in zip(predicted_signs, original_numbers)])
+            predicted_answer = str(round(result, self._arithmetic_round_ndigits))
+            predicted_answers.append(predicted_answer)
+
+            log_likelihoods = torch.gather(log_probs, dim=-1, index=predicted_tags.unsqueeze(-1).long()).squeeze(-1)
+            answer_logprob = log_likelihoods.sum().detach().cpu().numpy().tolist()
+            predicted_logprobs.append(answer_logprob)
+
+        answer_dict = {
+            'values': predicted_answers,
+            'logprobs': predicted_logprobs
+        }
+
         return answer_dict
 
     def _get_mask(self, number_indices: torch.LongTensor, with_special_numbers: bool) -> torch.LongTensor:

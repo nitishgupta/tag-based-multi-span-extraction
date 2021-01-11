@@ -265,6 +265,63 @@ class MultiSpanHead(Head):
         }
         return answer_dict
 
+
+    def decode_topk_answers(self,
+                            log_probs: torch.LongTensor,
+                            k: int,
+                            qp_tokens: List[Token],
+                            p_text: str,
+                            q_text: str,
+                            question_passage_wordpieces: List[List[int]],
+                            question_and_passage_mask: torch.LongTensor,
+                            passage_mask: torch.LongTensor,
+                            first_wordpiece_mask: torch.LongTensor,
+                            **kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        mask = self._get_mask(question_and_passage_mask, passage_mask, first_wordpiece_mask)
+        masked_indices = mask.nonzero().squeeze()
+        masked_log_probs = log_probs[masked_indices]
+
+        # (batch_size, k, passage_len)
+        top_k_masked_predicted_tags = torch.Tensor(viterbi_tags(masked_log_probs.unsqueeze(0),
+                                                                transitions=self._transitions,
+                                                                constraint_mask=self._constraint_mask,
+                                                                top_k=k)).to(masked_log_probs.device)
+
+        # (k, passage_len)
+        top_k_masked_predicted_tags = top_k_masked_predicted_tags[0, :, :]
+        num_decodings = top_k_masked_predicted_tags.size()[0]
+
+        masked_qp_indices = np.arange(len(qp_tokens))[masked_indices.cpu()].tolist()
+
+        topk_answers = []
+        topk_logprobs = []
+
+        for i in range(num_decodings):
+            # (passage_len)
+            tags = top_k_masked_predicted_tags[i, :]
+            spans_text, spans_indices = self._decode_spans_from_tags(tags,
+                                                                     masked_qp_indices,
+                                                                     qp_tokens,
+                                                                     question_passage_wordpieces,
+                                                                     p_text,
+                                                                     q_text)
+
+            # get the log-likelihood per each sequence index
+            # Shape: (seq_length)
+            log_likelihoods = \
+                torch.gather(masked_log_probs, dim=-1, index=tags.unsqueeze(-1).long()).squeeze(-1)
+            seq_logprob = log_likelihoods.sum().detach().cpu().numpy().tolist()
+
+            spans_text = list(OrderedDict.fromkeys(spans_text))
+            topk_answers.append(spans_text)
+            topk_logprobs.append(seq_logprob)
+
+        answer_dict = {
+            'logprobs': topk_logprobs,
+            'values': topk_answers
+        }
+        return answer_dict
+
     def _get_gold_answer(self,
                          gold_answer_representations: Dict[str, torch.LongTensor],
                          log_probs: torch.LongTensor,

@@ -1,4 +1,4 @@
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Tuple
 
 import torch
 
@@ -250,8 +250,7 @@ class SingleSpanHead(Head):
                       p_text: str,
                       q_text: str,
                       **kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        
-        (predicted_start, predicted_end)  = tuple(best_span.detach().cpu().numpy())
+        (predicted_start, predicted_end) = tuple(best_span.detach().cpu().numpy())
         answer_tokens = qp_tokens[predicted_start:predicted_end + 1]
         spans_text, spans_indices = decode_token_spans([(self.get_context(), answer_tokens)], p_text, q_text)
         predicted_answer = spans_text[0]
@@ -261,6 +260,38 @@ class SingleSpanHead(Head):
             'spans': spans_indices
         }
       
+        return answer_dict
+
+    def decode_topk_answers(self,
+                            start_log_probs: torch.Tensor,
+                            end_log_probs: torch.Tensor,
+                            k: int,
+                            qp_tokens: torch.LongTensor,
+                            p_text: str,
+                            q_text: str,
+                            **kwargs: Dict[str, Any]) -> Dict[str, Any]:
+
+        topk_logprobs, topk_bestspans = get_best_topk_spans(start_log_probs.unsqueeze(0),
+                                                            end_log_probs.unsqueeze(0), k)
+        # Converted (batch_size=1, k, 2) into a list
+        topk_spans = topk_bestspans.detach().cpu().numpy().tolist()
+        topk_spans = topk_spans[0]
+
+        predicted_answers = []
+        for best_span in topk_spans:
+            (predicted_start, predicted_end) = tuple(best_span)
+            answer_tokens = qp_tokens[predicted_start:predicted_end + 1]
+            spans_text, spans_indices = decode_token_spans([(self.get_context(), answer_tokens)], p_text, q_text)
+            predicted_answer = spans_text[0]
+            predicted_answers.append(predicted_answer)
+
+        topk_logprobs = topk_logprobs.detach().cpu().numpy().tolist()[0]
+
+        answer_dict = {
+            'values': predicted_answers,
+            'logprobs': topk_logprobs
+        }
+
         return answer_dict
 
     def get_input_and_mask(self, kwargs: Dict[str, Any]) -> torch.LongTensor:
@@ -305,3 +336,39 @@ def get_best_span(span_start_logits: torch.Tensor, span_end_logits: torch.Tensor
     span_start_indices = best_spans // passage_length
     span_end_indices = best_spans % passage_length
     return torch.stack([span_start_indices, span_end_indices], dim=-1)
+
+
+def get_best_topk_spans(span_start_logits: torch.Tensor, span_end_logits: torch.Tensor,
+                        k: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    This acts the same as the static method ``BidirectionalAttentionFlow.get_best_span()``
+    in ``allennlp/models/reading_comprehension/bidaf.py``. We keep it here so that users can
+    directly import this function without the class.
+
+    We call the inputs "logits" - they could either be unnormalized logits or normalized log
+    probabilities.  A log_softmax operation is a constant shifting of the entire logit
+    vector, so taking an argmax over either one gives the same result.
+    """
+    if span_start_logits.dim() != 2 or span_end_logits.dim() != 2:
+        raise ValueError("Input shapes must be (batch_size, passage_length)")
+    batch_size, passage_length = span_start_logits.size()
+    device = span_start_logits.device
+    # (batch_size, passage_length, passage_length)
+    span_log_probs = span_start_logits.unsqueeze(2) + span_end_logits.unsqueeze(1)
+    # Only the upper triangle of the span matrix is valid; the lower triangle has entries where
+    # the span ends before it starts.
+    span_log_mask = torch.triu(torch.ones((passage_length, passage_length),
+                                          device=device)).log()
+    valid_span_log_probs = span_log_probs + span_log_mask
+
+    # Here we take the span matrix and flatten it, then find the best span using argmax.  We
+    # can recover the start and end indices from this flattened list using simple modular
+    # arithmetic.
+    # Input: (batch_size, passage_length * passage_length)
+    # Output: both are (batch_size, k)
+    topk_logprobs, topk_span_indices = torch.topk(valid_span_log_probs.view(batch_size, -1), k, dim=-1)
+    # (batch_size, k)
+    topk_span_start_indices = topk_span_indices // passage_length
+    topk_span_end_indices = topk_span_indices % passage_length
+
+    return topk_logprobs, torch.stack([topk_span_start_indices, topk_span_end_indices], dim=-1)

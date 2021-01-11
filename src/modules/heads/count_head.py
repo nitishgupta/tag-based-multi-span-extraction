@@ -196,3 +196,25 @@ class CountHead(Head):
             'count': predicted_count
         }
         return answer_dict
+
+    def decode_topk_answers(self,
+                            k: int,
+                            log_probs: torch.Tensor,
+                            **kwargs: Dict[str, Any]):
+
+        # Info about the best count number prediction
+        # Shape: (k) each
+        k = min(k, 10)
+        topk_logprobs, topk_counts = torch.topk(log_probs, k, dim=-1)
+
+        topk_logprobs = topk_logprobs.detach().cpu().numpy().tolist()
+        topk_counts = topk_counts.detach().cpu().numpy().tolist()
+        topk_counts = [str(c) for c in topk_counts]
+
+        topk_answer_dict = {
+            'logprobs': topk_logprobs,
+            'values': topk_counts
+        }
+        return topk_answer_dict
+
+
