@@ -105,6 +105,7 @@ def get_topk_contrastive_answers(contrastive_answers, paragraph_info):
                                                "contrastive_answer": {"number": "",
                                                                        "date": {"day": "", "month": "", "year": ""},
                                                                        "spans": contrastive_spans}}
+                contrastive_qas.append(new_question_info)
     return contrastive_qas
 
 
