@@ -83,8 +83,13 @@ def read_topk_predictions(topk_data, max_k=10):
         logprobs = datum["all_answers"]["multi_span"]["logprobs"]
         answers = datum["all_answers"]["multi_span"]["values"]
         for logprob, candidate in list(zip(logprobs, answers))[:max_k]:
-            if candidate != answer:
-                topk_contrastive_answers[datum["passage_id"]] = {datum["query_id"]: candidate}
+            if candidate == answer:
+                continue
+            new_spans = set(candidate).difference(set(answer))
+            if len(new_spans) == 1 and len(list(new_spans)[0]) == 1:
+                # The new span is a period or a hypen or something
+                continue
+            topk_contrastive_answers[datum["passage_id"]] = {datum["query_id"]: candidate}
 
     print(f"Read a total of {len(topk_data)} data points")
     print(f"Found {len(topk_contrastive_answers)} within a top_k value of {max_k}")
