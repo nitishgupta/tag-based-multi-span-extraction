@@ -83,7 +83,7 @@ def read_topk_predictions(topk_data, max_k=10):
         logprobs = datum["all_answers"]["multi_span"]["logprobs"]
         answers = datum["all_answers"]["multi_span"]["values"]
         for logprob, candidate in list(zip(logprobs, answers))[:max_k]:
-            if candidate == answer:
+            if not candidate or candidate == answer:
                 continue
             new_spans = set(candidate).difference(set(answer))
             if len(new_spans) == 1 and len(list(new_spans)[0]) == 1:
