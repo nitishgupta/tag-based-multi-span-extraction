@@ -1,0 +1,316 @@
+{
+    "nfl_2201": {
+        "passage": "To start the season, the Lions traveled south to Tampa, Florida to take on the Tampa Bay Buccaneers. The Lions scored first in the first quarter with a 23-yard field goal by Jason Hanson. The Buccaneers tied it up with a 38-yard field goal by Connor Barth, then took the lead when Aqib Talib intercepted a pass from Matthew Stafford and ran it in 28 yards. The Lions responded with a 28-yard field goal. In the second quarter, Detroit took the lead with a 36-yard touchdown catch by Calvin Johnson, and later added more points when Tony Scheffler caught an 11-yard TD pass. Tampa Bay responded with a 31-yard field goal just before halftime. The second half was relatively quiet, with each team only scoring one touchdown. First, Detroit's Calvin Johnson caught a 1-yard pass in the third quarter. The game's final points came when Mike Williams of Tampa Bay caught a 5-yard pass.  The Lions won their regular season opener for the first time since 2007",
+        "qa_pairs": [
+            {
+                "question": "How many points did the buccaneers need to tie in the first?",
+                "answer": {
+                    "number": "3",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "9"
+                    ]
+                },
+                "query_id": "f16c0ee7-f131-4a8b-a6ac-4d275ea68066"
+            },
+            {
+                "question": "How many field goals did the Lions score?",
+                "answer": {
+                    "number": "2",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "5"
+                    ]
+                },
+                "query_id": "c9582e03-b01b-42ed-83e0-b90a5334aefa"
+            },
+            {
+                "question": "How long was the Lion's longest field goal?",
+                "answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "28-yard"
+                    ]
+                },
+                "contrastive_answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "31-yard", "11-yard", "4", "2"
+                    ]
+                },
+                "query_id": "f703d43d-73fa-4fda-8913-d81bd5569700"
+            },
+            {
+                "question": "Who caught the touchdown for the fewest yard?",
+                "answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "Mike Williams"
+                    ]
+                },
+                "query_id": "2fd4f473-af2b-44ce-929a-20c82fa6be2c"
+            },
+            {
+                "question": "Who caught the shortest touchdown pass?",
+                "answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "Calvin Johnson"
+                    ]
+                },
+                "query_id": "6592e06d-4ad6-484f-a9a5-5cb72c76dfee"
+            },
+            {
+                "question": "How many field goals were scored in the first quarter?",
+                "answer": {
+                    "number": "3",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "8",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "query_id": "99a50d10-ec43-4040-8c8e-2eb5bafe1906"
+            },
+            {
+                "question": "How many yards was the shortest touchdown scoring play?",
+                "answer": {
+                    "number": "1",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "7",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "query_id": "af0f2cbd-abf2-4570-ae0e-89f335da4f60",
+                "highlights": [],
+                "question_type": []
+            },
+            {
+                "question": "How many touchdowns were scored in the second quarter?",
+                "answer": {
+                    "number": "3",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "contrastive_answer": {
+                    "number": "2",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "query_id": "c93cd84b-d76c-48e3-b73b-ef1d67003e4b",
+                "highlights": [],
+                "question_type": []
+            },
+            {
+                "question": "Which player scored the first points of the game for Tampa Bay?",
+                "answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "Connor Barth"
+                    ]
+                },
+                "query_id": "a237ff8b-a6a3-4c68-baf8-f883ec5dac7e",
+                "highlights": [],
+                "question_type": []
+            },
+            {
+                "question": "How many yards Hanson score with in the first?",
+                "answer": {
+                    "number": "23",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "query_id": "e1afeb0e-9ad7-4733-bcc2-c977344de287",
+                "highlights": [],
+                "question_type": []
+            },
+            {
+                "question": "How many field goals were made in the first quarter?",
+                "answer": {
+                    "number": "3",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [],
+                    "worker_id": "",
+                    "hit_id": ""
+                },
+                "contrastive_answer": {
+                    "number": "9",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "query_id": "2f4bb460-7f65-411f-9cd3-b3653a534942",
+                "highlights": [],
+                "question_type": [],
+                "validated_answers": [],
+                "expert_answers": []
+            },
+            {
+                "question": "Who threw the first touchdown pass of the game?",
+                "answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "Matthew Stafford"
+                    ],
+                    "worker_id": "",
+                    "hit_id": ""
+                },
+                "query_id": "b04a6f58-2860-445b-8770-d309a467fe30",
+                "highlights": [],
+                "question_type": [],
+                "validated_answers": [],
+                "expert_answers": []
+            },
+            {
+                "question": "How many touchdowns were scored in the 2nd half?",
+                "answer": {
+                    "number": "2",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [],
+                    "worker_id": "",
+                    "hit_id": ""
+                },
+                "query_id": "76e0e522-14a7-4073-9138-0f2a7b039333",
+                "highlights": [],
+                "question_type": [],
+                "validated_answers": [],
+                "expert_answers": []
+            },
+            {
+                "question": "Who caught the longest touchdown reception of the game?",
+                "answer": {
+                    "number": "",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": [
+                        "Calvin Johnson"
+                    ],
+                    "worker_id": "",
+                    "hit_id": ""
+                },
+                "query_id": "3810d97f-133b-4433-b615-3d0b1b2da032",
+                "highlights": [],
+                "question_type": [],
+                "validated_answers": [],
+                "expert_answers": []
+            },
+            {
+                "question": "How many points were scored first?",
+                "answer": {
+                    "number": "3",
+                    "date": {
+                        "day": "",
+                        "month": "",
+                        "year": ""
+                    },
+                    "spans": []
+                },
+                "query_id": "33f9f7bd-518b-45ae-86d5-c1475167d54f"
+            }
+        ],
+        "wiki_url": "https://en.wikipedia.org/wiki/2014_Cleveland_Browns"
+    }
+}

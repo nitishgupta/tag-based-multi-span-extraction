@@ -41,13 +41,16 @@ def get_number_from_word(word):
     word = word.replace(",", "")
     try:
         number = word_to_num(word)
-    except ValueError:
+    except:
+    # except ValueError:
         try:
             number = int(word)
-        except ValueError:
+        # except ValueError:
+        except:
             try:
                 number = float(word)
-            except ValueError:
+            # except ValueError:
+            except:
                 if re.match('^\d*1st$', word):  # ending in '1st'
                     number = int(word[:-2])
                 elif re.match('^\d*2nd$', word):  # ending in '2nd'

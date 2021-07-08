@@ -9,7 +9,7 @@ config {
         },
         "pickle"+: {
             "file_name": "all_heads_" + $.pretrained_model,
-        }
+        },
     },
     "model"+: {
         "heads": {

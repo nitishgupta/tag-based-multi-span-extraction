@@ -2,7 +2,12 @@
     special_numbers:: [100, 1],
     multi_span_ignore_question:: false,
     multi_span_decoding_style:: "at_least_one",
+    default_training_style:: "soft_em",
     multi_span_training_style:: "soft_em",
+    pspan_span_training_style:: "soft_em",
+    qspan_span_training_style:: "soft_em",
+    arithmetic_training_style:: "soft_em",
+    count_training_style:: "soft_em",
     multi_span_prediction_method:: "viterbi",
     multi_span_labels:: {
         'O': 0,
@@ -30,13 +35,13 @@
             "type": "passage_span_head",
             "start_output_layer": $.index_prediction_module(input_dim = $.bert_dim),
             "end_output_layer": $.index_prediction_module(input_dim = $.bert_dim),
-            "training_style": $.multi_span_training_style
+            "training_style": $.pspan_span_training_style
         },
         question_span: {
             "type": "question_span_head",
             "start_output_layer": $.default_ffn(input_dim = 2 * $.bert_dim, hidden_dim = $.hidden_dim, output_dim = 1),
             "end_output_layer": $.default_ffn(input_dim = 2 * $.bert_dim, hidden_dim = $.hidden_dim, output_dim = 1),
-            "training_style": $.multi_span_training_style
+            "training_style": $.qspan_span_training_style
         },
         multi_span: {
             "type": "multi_span_head",
@@ -52,12 +57,13 @@
             "output_layer": $.default_ffn(input_dim = 2 * $.bert_dim, hidden_dim = $.hidden_dim, output_dim = 3),
             "special_numbers": $.special_numbers,
             "special_embedding_dim": $.bert_dim,
-            "training_style": $.multi_span_training_style,
+            "training_style": $.arithmetic_training_style,
         },
         count: {
             "type": "count_head",
             "max_count": 10,
             "output_layer": $.default_ffn(input_dim = $.bert_dim, hidden_dim = $.hidden_dim, output_dim = self.max_count + 1),
+            "training_style": $.count_training_style
         }
     },
     answer_field_generators:: {
@@ -95,7 +101,7 @@
         "pickle": {
             "path": error "Must override reader.pickle.path",
             "file_name": error "Must override reader.pickle.file_name",
-            "action": "load" # save / load / null
+            "action": "null" # save / load / null
         }
     },
     "validation_dataset_reader": $.dataset_reader + {"is_training": false},
@@ -117,13 +123,14 @@
         },
         "passage_summary_vector_module": summary_module,
         "question_summary_vector_module": summary_module,
-        "heads": error "Must override model.heads"
+        "heads": error "Must override model.heads",
+        "training_style": "vanilla"
     },
     "train_data_path": error "Must override train_data_path",
     "validation_data_path": error "Must override validation_data_path",
     "trainer": {
         "cuda_device": 0,
-        "keep_serialized_model_every_num_seconds": 3600,
+        "num_serialized_models_to_keep": 1,
         "num_epochs": 35,
         "optimizer": {
             "type": "bert_adam",

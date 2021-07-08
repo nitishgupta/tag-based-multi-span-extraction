@@ -134,6 +134,15 @@ class DropReader(DatasetReader):
                 if self._is_training and answer_type is None:
                     continue
 
+                contrastive_answer_annotations: List[Dict] = []
+                contrastive_ans_type = None
+                if "contrastive_answer" in qa_pair and qa_pair["contrastive_answer"]:
+                    contrastive_answer = qa_pair["contrastive_answer"]
+                    contrastive_ans_type = get_answer_type(contrastive_answer)
+                    if contrastive_ans_type is not None and answer_type in self._answer_types_filter:
+                        contrastive_answer_annotations.append(contrastive_answer)
+
+
                 instance = self.text_to_instance(question_text,
                                                  passage_text,
                                                  passage_tokens,
@@ -143,6 +152,8 @@ class DropReader(DatasetReader):
                                                  question_id,
                                                  passage_id,
                                                  answer_annotations,
+                                                 contrastive_answer_annotations,
+                                                 contrastive_ans_type,
                                                  answer_type,
                                                  global_index + relative_index)
                 if instance is not None:
@@ -165,6 +176,8 @@ class DropReader(DatasetReader):
                          question_id: str = None,
                          passage_id: str = None,
                          answer_annotations: List[Dict] = None,
+                         contrastive_answer_annotations: List[Dict] = None,
+                         contrastive_ans_type: str = None,
                          answer_type: str = None,
                          instance_index: int = None) -> Optional[Instance]:
         # We alter it, so use a copy to keep it usable for the next questions with the same paragrpah
@@ -281,10 +294,16 @@ class DropReader(DatasetReader):
                 'old_reader_behavior': self._old_reader_behavior # TODO: Elad - temporary, used to mimic the old reader's behavior
             }
 
+            # Given the answer-type; answer_generator_names are the ways in which answer can be produced
+            # E.g. for type="number", answer_generator_names = ['arithmetic_answer', 'count_answer',
+            #                                                   'passage_span_answer', 'question_span_answer',
+            #                                                   'tagged_answer']
             answer_generator_names = None
             if self._answer_generator_names_per_type is not None:
                 answer_generator_names = self._answer_generator_names_per_type[answer_type]
 
+            # self._answer_field_generators -- {answer_generator_name: answer_field_generator}
+            # For each answer_generator_name, if there is a generator for that, use it create relevant answer-fields
             has_answer = False
             for answer_generator_name, answer_field_generator in self._answer_field_generators.items():
                 if answer_generator_names is None or answer_generator_name in answer_generator_names:
@@ -297,6 +316,43 @@ class DropReader(DatasetReader):
             # throw away instances without possible answer generation
             if self._is_training and not has_answer:
                 return None
+
+            """ Contrastive answer """
+            if contrastive_answer_annotations:
+                contrastive_answer_accessor, contrastive_answer_texts = extract_answer_info_from_annotation(
+                    contrastive_answer_annotations[0]
+                )
+                if contrastive_answer_accessor == AnswerAccessor.SPAN.value:
+                    contrastive_answer_texts = list(OrderedDict.fromkeys(contrastive_answer_texts))
+
+                kwargs["answer_type"] = contrastive_ans_type
+                kwargs["answer_texts"] = contrastive_answer_texts
+                # Setting old_reader_behavior to True only considers answer spans (end-point/tagged) if all spans are
+                # found in the text. For contrastive answers we expect a set of spans that are potential negatives and
+                # not all of them need to appear in the text
+                kwargs["old_reader_behavior"] = False
+
+                has_contrastive_answer = False
+                for answer_generator_name, answer_field_generator in self._answer_field_generators.items():
+                    # Create contrastive-answer representation from all generators irresepective of the gold ans type
+                    # For a given generator,
+                    #  - if the gold answer is not supported, the log-likelihood will be masked anyway
+                    #  - if the contrastive ans is not supported, model will resort to log-likelihood
+                    contrastive_answer_fields, gen_has_answer = answer_field_generator.get_answer_fields(**kwargs)
+                    contrastive_answer_fields = {
+                        "contrastive_" + key: value for key, value in contrastive_answer_fields.items()
+                    }
+                    fields.update(contrastive_answer_fields)
+                    has_contrastive_answer |= gen_has_answer
+            else:
+                # It no contrastive-answer, add empty answer field for each answer-generator. This should default to
+                # max-likelihood training for this instance
+                for answer_generator_name, answer_field_generator in self._answer_field_generators.items():
+                    contrastive_answer_fields = answer_field_generator.get_empty_answer_fields(**kwargs)
+                    contrastive_answer_fields = {
+                        "contrastive_"+key: value for key, value in contrastive_answer_fields.items()
+                    }
+                    fields.update(contrastive_answer_fields)
 
         fields['metadata'] = MetadataField(metadata)
         

@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple, Any
 
+from allennlp.data.tokenizers import Token
 from allennlp.data.fields import Field, ListField, SpanField
 from allennlp.data.dataset_readers.reading_comprehension.drop import DropReader
 

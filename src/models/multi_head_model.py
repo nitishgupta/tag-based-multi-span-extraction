@@ -28,6 +28,9 @@ class MultiHeadModel(Model):
                 question_summary_vector_module: Optional[FeedForward] = None,
                 training_evaluation: bool = True,
                 output_all_answers: bool = False,
+                topk_decoding: bool = False,
+                topk: int = 50,
+                training_style: str = "vanilla",
                 initializer: InitializerApplicator = InitializerApplicator(),
                 regularizer: Optional[RegularizerApplicator] = None) -> None:
         super().__init__(vocab, regularizer)
@@ -43,6 +46,10 @@ class MultiHeadModel(Model):
         self._training_evaluation = training_evaluation
 
         self._output_all_answers = output_all_answers
+        self._topk_decoding = topk_decoding
+        self._topk = topk
+
+        self._training_style = training_style
 
         self._metrics = CustomEmAndF1(dataset_name)
 
@@ -103,7 +110,18 @@ class MultiHeadModel(Model):
                 answer_as_passage_spans: torch.LongTensor = None,
                 answer_as_question_spans: torch.LongTensor = None,
                 span_bio_labels: torch.LongTensor = None,
-                is_bio_mask: torch.LongTensor = None) -> Dict[str, Any]:
+                is_bio_mask: torch.LongTensor = None,
+                contrastive_wordpiece_indices: torch.LongTensor = None,
+                contrastive_answer_as_expressions: torch.LongTensor = None,
+                contrastive_answer_as_expressions_extra: torch.LongTensor = None,
+                contrastive_answer_as_counts: torch.LongTensor = None,
+                contrastive_answer_as_text_to_disjoint_bios: torch.LongTensor = None,
+                contrastive_answer_as_list_of_bios: torch.LongTensor = None,
+                contrastive_answer_as_passage_spans: torch.LongTensor = None,
+                contrastive_answer_as_question_spans: torch.LongTensor = None,
+                contrastive_span_bio_labels: torch.LongTensor = None,
+                contrastive_is_bio_mask: torch.LongTensor = None,
+                ) -> Dict[str, Any]:
         # pylint: disable=arguments-differ
         question_passage_special_tokens_mask = (1 - question_passage_special_tokens_mask)
         
@@ -119,7 +137,16 @@ class MultiHeadModel(Model):
             'answer_as_counts': answer_as_counts,
             'answer_as_text_to_disjoint_bios': answer_as_text_to_disjoint_bios,
             'answer_as_list_of_bios': answer_as_list_of_bios,
-            'span_bio_labels': span_bio_labels
+            'span_bio_labels': span_bio_labels,
+            # Contrastive answers
+            'contrastive_answer_as_expressions': contrastive_answer_as_expressions,
+            'contrastive_answer_as_expressions_extra': contrastive_answer_as_expressions_extra,
+            'contrastive_answer_as_passage_spans': contrastive_answer_as_passage_spans,
+            'contrastive_answer_as_question_span': contrastive_answer_as_question_spans,
+            'contrastive_answer_as_counts': contrastive_answer_as_counts,
+            'contrastive_answer_as_text_to_disjoint_bios': contrastive_answer_as_text_to_disjoint_bios,
+            'contrastive_answer_as_list_of_bios': contrastive_answer_as_list_of_bios,
+            'contrastive_span_bio_labels': contrastive_span_bio_labels,
         }
 
         has_answer = False
@@ -188,7 +215,7 @@ class MultiHeadModel(Model):
             for head_name, head in self._heads.items():
                 log_marginal_likelihood = head.gold_log_marginal_likelihood(**kwargs, **head_outputs[head_name])
                 log_marginal_likelihood_list.append(log_marginal_likelihood)
-            
+
             if head_count > 1:
                 # Add the ability probabilities if there is more than one ability
                 all_log_marginal_likelihoods = torch.stack(log_marginal_likelihood_list, dim=-1)
@@ -196,7 +223,43 @@ class MultiHeadModel(Model):
                 marginal_log_likelihood = util.logsumexp(all_log_marginal_likelihoods)
             else:
                 marginal_log_likelihood = log_marginal_likelihood_list[0]
-        
+
+
+            if self._training_style == "contrastive":
+                # Contrastive treatment
+                contrastve_gold_answer_representations = {
+                    'answer_as_expressions': contrastive_answer_as_expressions,
+                    'answer_as_expressions_extra': contrastive_answer_as_expressions_extra,
+                    'answer_as_passage_spans': contrastive_answer_as_passage_spans,
+                    'answer_as_question_spans': contrastive_answer_as_question_spans,
+                    'answer_as_counts': contrastive_answer_as_counts,
+                    'answer_as_text_to_disjoint_bios': contrastive_answer_as_text_to_disjoint_bios,
+                    'answer_as_list_of_bios': contrastive_answer_as_list_of_bios,
+                    'span_bio_labels': contrastive_span_bio_labels,
+                }
+                kwargs['gold_answer_representations'] = contrastve_gold_answer_representations
+                contrastive_log_marginal_likelihood_list = []
+                for head_name, head in self._heads.items():
+                    log_marginal_likelihood = head.gold_log_marginal_likelihood(**kwargs, **head_outputs[head_name])
+                    contrastive_log_marginal_likelihood_list.append(log_marginal_likelihood)
+
+                if head_count > 1:
+                    # Add the ability probabilities if there is more than one ability
+                    all_contrastive_log_marginal_likelihoods = torch.stack(contrastive_log_marginal_likelihood_list, dim=-1)
+                    all_contrastive_log_marginal_likelihoods = (all_contrastive_log_marginal_likelihoods +
+                                                                answer_ability_log_probs)
+                    contrastive_marginal_log_likelihood = util.logsumexp(all_contrastive_log_marginal_likelihoods)
+                else:
+                    contrastive_marginal_log_likelihood = contrastive_log_marginal_likelihood_list[0]
+
+                # log(p(g)_contrastive) = log(p(g)) - log(p(g) + p(c))
+                # log(p(g) + p(c)) = logsumexp([p(g), p(c)])
+                concatenated_logprobs = torch.cat([marginal_log_likelihood.unsqueeze(1),
+                                                   contrastive_marginal_log_likelihood.unsqueeze(1)], dim=1)
+                log_denominator = util.logsumexp(concatenated_logprobs, dim=-1)
+                contrastive_log_likelihood = marginal_log_likelihood - log_denominator
+                marginal_log_likelihood += contrastive_log_likelihood
+
             output_dict['loss'] = -1 * marginal_log_likelihood.mean()
 
         with torch.no_grad():
@@ -248,7 +311,6 @@ class MultiHeadModel(Model):
                     for key, value in head_outputs[predicting_head_name].items():
                         if key not in unpassable_keys:
                             instance_kwargs[key] = value[i]
-
 
                     # get prediction for an instance in the batch
                     answer_json = predicting_head.decode_answer(**instance_kwargs)
@@ -318,7 +380,15 @@ class MultiHeadModel(Model):
                                         instance_kwargs[key] = value[i]
 
                                 # get prediction for an instance in the batch
-                                answer_json = predicting_head.decode_answer(**instance_kwargs)
+                                if not self._topk_decoding:
+                                    answer_json = predicting_head.decode_answer(**instance_kwargs)
+                                else:
+                                    instance_kwargs['k'] = self._topk
+                                    try:
+                                        answer_json = predicting_head.decode_topk_answers(**instance_kwargs)
+                                    except:
+                                        print("issue in: {}".format(predicting_head_name))
+                                        answer_json = {'values': [], 'logprobs': []}
                                 answer_json['probability'] = torch.nn.functional.softmax(answer_ability_logits, -1)[i][predicting_head_index].item()
                                 answers_dict[predicting_head_name] = answer_json
 
@@ -331,6 +401,7 @@ class MultiHeadModel(Model):
         scores_per_answer_type, scores_per_head = self._metrics.get_metric(reset)
         metrics = {'em': exact_match, 'f1': f1_score}
 
+        """
         for answer_type, type_scores_per_head in scores_per_answer_type_and_head.items():
             for head, (answer_type_head_exact_match, answer_type_head_f1_score, type_head_count) in type_scores_per_head.items():
                 if 'multi' in head and 'span' in answer_type:
@@ -368,5 +439,6 @@ class MultiHeadModel(Model):
 
             metrics['em_all_spans'] = em_all_spans
             metrics['f1_all_spans'] = f1_all_spans
+        """
         
         return metrics
